@@ -35,7 +35,7 @@ ui <- fluidPage(
 server <- function(input, output, session) {
   results <- eventReactive(input$run, {
     legislator <- trimws(input$legislator)
-    validate(need(nchar(legislator) > 0, "Enter a legislator name."))
+    shiny::validate(shiny::need(nchar(legislator) > 0, "Enter a legislator name."))
 
     earmarks <- get_earmarks_for_legislator(legislator)
     finance <- get_openfec_summary(legislator, cycle = input$cycle, chamber = input$chamber)
@@ -72,7 +72,7 @@ server <- function(input, output, session) {
 
   output$earmark_plot <- renderPlot({
     x <- results()$earmarks
-    validate(need(nrow(x) > 0, "No earmark records available for this legislator yet."))
+    shiny::validate(shiny::need(nrow(x) > 0, "No earmark records available for this legislator yet."))
 
     ggplot(x, aes(x = reorder(project_type, amount_usd, FUN = sum), y = amount_usd)) +
       geom_col(fill = "#1f77b4") +
