@@ -2,6 +2,23 @@ library(readr)
 library(dplyr)
 library(tibble)
 
+normalize_name <- function(x) {
+  y <- tolower(x)
+  y <- gsub("[^a-z\\s]", " ", y)
+  y <- gsub("\\s+", " ", y)
+  trimws(y)
+}
+
+name_matches <- function(dataset_name, query_name) {
+  ds <- normalize_name(dataset_name)
+  q <- normalize_name(query_name)
+  if (identical(q, "")) {
+    return(FALSE)
+  }
+
+  ds == q || grepl(q, ds, fixed = TRUE) || grepl(ds, q, fixed = TRUE)
+}
+
 get_earmarks_for_legislator <- function(legislator_name) {
   path <- "data/earmarks.csv"
 
@@ -21,7 +38,9 @@ get_earmarks_for_legislator <- function(legislator_name) {
 
   raw |>
     mutate(legislator = trimws(legislator)) |>
-    filter(tolower(legislator) == tolower(trimws(legislator_name))) |>
+    rowwise() |>
+    filter(name_matches(legislator, legislator_name)) |>
+    ungroup() |>
     transmute(
       legislator = legislator,
       project_type = project_type,

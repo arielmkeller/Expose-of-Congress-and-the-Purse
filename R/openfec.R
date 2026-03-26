@@ -3,6 +3,27 @@ library(jsonlite)
 library(dplyr)
 library(tibble)
 
+normalize_person_name <- function(x) {
+  y <- tolower(x)
+  y <- gsub("[^a-z\\s]", " ", y)
+  y <- gsub("\\s+", " ", y)
+  trimws(y)
+}
+
+name_similarity_score <- function(candidate_name, query_name) {
+  c_name <- normalize_person_name(candidate_name)
+  q_name <- normalize_person_name(query_name)
+  if (identical(c_name, "") || identical(q_name, "")) {
+    return(0)
+  }
+
+  c_tokens <- unique(unlist(strsplit(c_name, " ")))
+  q_tokens <- unique(unlist(strsplit(q_name, " ")))
+  overlap <- length(intersect(c_tokens, q_tokens))
+  last_name_bonus <- ifelse(tail(q_tokens, 1) %in% c_tokens, 1, 0)
+  overlap + last_name_bonus
+}
+
 get_openfec_summary <- function(legislator, cycle = 2024, chamber = "House") {
   api_key <- Sys.getenv("OPENFEC_API_KEY", unset = "")
   if (identical(api_key, "")) {
@@ -41,7 +62,14 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = "House") {
     ))
   }
 
-  candidate_id <- candidate_json$results$candidate_id[[1]]
+  candidates <- as_tibble(candidate_json$results) |>
+    mutate(
+      score = vapply(name, name_similarity_score, numeric(1), query_name = legislator),
+      incumbent_flag = ifelse(is.na(incumbent_challenge_full), "", incumbent_challenge_full)
+    ) |>
+    arrange(desc(score), desc(incumbent_flag == "Incumbent"))
+
+  candidate_id <- candidates$candidate_id[[1]]
   totals_req <- request("https://api.open.fec.gov/v1/candidate/totals/") |>
     req_url_query(
       candidate_id = candidate_id,

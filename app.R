@@ -25,7 +25,9 @@ ui <- fluidPage(
       h3("Earmark categories"),
       plotOutput("earmark_plot", height = 300),
       h3("Campaign finance summary"),
-      DTOutput("finance_table")
+      DTOutput("finance_table"),
+      h3("USAspending context"),
+      DTOutput("spending_table")
     )
   )
 )
@@ -81,6 +83,10 @@ server <- function(input, output, session) {
 
   output$finance_table <- renderDT({
     datatable(results()$finance, options = list(pageLength = 5))
+  })
+
+  output$spending_table <- renderDT({
+    datatable(results()$spending, options = list(pageLength = 5))
   })
 }
 

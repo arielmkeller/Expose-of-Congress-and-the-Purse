@@ -35,5 +35,6 @@ shiny::runApp()
 ## Current MVP status
 
 - OpenFEC: live call if `OPENFEC_API_KEY` is set, fallback sample output otherwise.
-- USAspending: placeholder context function ready to replace with live endpoint wiring.
+- USAspending: live keyword-based call to `spending_by_category` with fallback context when unavailable.
 - Translation layer: benchmark-based estimates from `data/benchmarks.csv`.
+- Legislator matching: normalized/fuzzy matching for earmark records and improved candidate ranking for OpenFEC search.
