@@ -7,17 +7,19 @@ source("R/openfec.R")
 source("R/usaspending.R")
 source("R/earmarks.R")
 source("R/translation.R")
+source("R/legislators.R")
 
 ui <- fluidPage(
   titlePanel("Expose of Congress and the Purse"),
   sidebarLayout(
     sidebarPanel(
-      textInput("legislator", "Legislator name", value = "Alexandria Ocasio-Cortez"),
-      selectInput("chamber", "Chamber", choices = c("House", "Senate"), selected = "House"),
+      selectizeInput("legislator", "Legislator", choices = NULL, multiple = FALSE),
       numericInput("cycle", "Election cycle", value = 2024, min = 2000, step = 2),
       actionButton("run", "Analyze")
     ),
     mainPanel(
+      h3("Member profile"),
+      tableOutput("member_profile"),
       h3("Key totals"),
       tableOutput("totals"),
       h3("Funding translation"),
@@ -33,12 +35,30 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  legislators_ref <- get_legislators_reference()
+  updateSelectizeInput(
+    session,
+    "legislator",
+    choices = legislators_ref$legislator,
+    selected = legislators_ref$legislator[[1]],
+    server = TRUE
+  )
+
+  selected_member <- reactive({
+    req(input$legislator)
+    legislators_ref |>
+      filter(legislator == input$legislator) |>
+      slice(1)
+  })
+
   results <- eventReactive(input$run, {
     legislator <- trimws(input$legislator)
     shiny::validate(shiny::need(nchar(legislator) > 0, "Enter a legislator name."))
+    member <- selected_member()
+    chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], "House")
 
     earmarks <- get_earmarks_for_legislator(legislator)
-    finance <- get_openfec_summary(legislator, cycle = input$cycle, chamber = input$chamber)
+    finance <- get_openfec_summary(legislator, cycle = input$cycle, chamber = chamber)
     spending <- get_usaspending_context(earmarks)
 
     total_earmarks <- sum(earmarks$amount_usd, na.rm = TRUE)
@@ -46,6 +66,7 @@ server <- function(input, output, session) {
 
     list(
       legislator = legislator,
+      member = member,
       earmarks = earmarks,
       finance = finance,
       spending = spending,
@@ -53,6 +74,18 @@ server <- function(input, output, session) {
       translation = translation
     )
   })
+
+  output$member_profile <- renderTable({
+    member <- selected_member()
+    shiny::validate(shiny::need(nrow(member) > 0, "Member profile unavailable."))
+    member |>
+      transmute(
+        legislator = legislator,
+        political_affiliation = party,
+        state = state,
+        chamber = chamber
+      )
+  }, striped = TRUE, bordered = TRUE, width = "100%")
 
   output$totals <- renderTable({
     x <- results()
