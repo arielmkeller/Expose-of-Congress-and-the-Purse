@@ -1,1 +1,39 @@
-# Expose-of-Congress-and-the-Purse
+# Expose of Congress and the Purse
+
+Interactive Shiny tool to connect a legislator with:
+- earmarked federal funding
+- campaign finance activity
+- plain-language dollar translations
+
+## Quick start
+
+1. Install packages in R:
+
+```r
+install.packages(c("shiny", "dplyr", "ggplot2", "DT", "httr2", "jsonlite", "readr", "tibble"))
+```
+
+2. Add API key in your shell profile (or `.Renviron`):
+
+```bash
+export OPENFEC_API_KEY="your_openfec_key_here"
+```
+
+3. Optional: use local earmark data.
+- Copy `data/earmarks_sample.csv` to `data/earmarks.csv`
+- Replace with your Appropriations dataset using columns:
+  - `legislator`
+  - `project_type`
+  - `amount_usd`
+
+4. Run app:
+
+```r
+shiny::runApp()
+```
+
+## Current MVP status
+
+- OpenFEC: live call if `OPENFEC_API_KEY` is set, fallback sample output otherwise.
+- USAspending: placeholder context function ready to replace with live endpoint wiring.
+- Translation layer: benchmark-based estimates from `data/benchmarks.csv`.
