@@ -13,7 +13,15 @@ Interactive Shiny tool to connect a legislator with:
 install.packages(c("shiny", "dplyr", "ggplot2", "DT", "httr2", "readr", "tibble"))
 ```
 
-2. Add API key in your shell profile (or `.Renviron`):
+2. Add OpenFEC API key (choose one):
+
+Option A: `.env` file in the project root (recommended)
+
+```text
+OPENFEC_API_KEY=your_openfec_key_here
+```
+
+Option B: shell profile or `.Renviron`
 
 ```bash
 export OPENFEC_API_KEY="your_openfec_key_here"
