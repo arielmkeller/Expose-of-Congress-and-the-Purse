@@ -4,3 +4,6 @@
 .Ruserdata
 .env
 data/raw/
+
+# OpenFEC cache
+/data/openfec_cache.rds

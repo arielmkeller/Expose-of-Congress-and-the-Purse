@@ -55,10 +55,16 @@ server <- function(input, output, session) {
     legislator <- trimws(input$legislator)
     shiny::validate(shiny::need(nchar(legislator) > 0, "Enter a legislator name."))
     member <- selected_member()
-    chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], "House")
+    chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
+    member_state <- ifelse(nrow(member) > 0, member$state[[1]], NA_character_)
 
     earmarks <- get_earmarks_for_legislator(legislator)
-    finance <- get_openfec_summary(legislator, cycle = input$cycle, chamber = chamber)
+    finance <- get_openfec_summary(
+      legislator,
+      cycle = input$cycle,
+      chamber = chamber,
+      state = member_state
+    )
     spending <- get_usaspending_context(earmarks)
 
     total_earmarks <- sum(earmarks$amount_usd, na.rm = TRUE)

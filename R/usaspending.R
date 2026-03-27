@@ -30,14 +30,17 @@ get_usaspending_context <- function(earmarks_df) {
     keyword = query_text
   )
 
-  req <- request("https://api.usaspending.gov/api/v2/search/spending_by_category/") |>
+  req <- request("https://api.usaspending.gov/api/v2/search/spending_by_category") |>
     req_method("POST") |>
     req_headers(`Content-Type` = "application/json") |>
     req_body_json(body, auto_unbox = TRUE)
 
-  live_resp <- tryCatch(req_perform(req), error = function(e) NULL)
-  if (!is.null(live_resp)) {
-    payload <- resp_body_json(live_resp, simplifyVector = TRUE)
+  live_resp <- tryCatch(req_perform(req), error = function(e) e)
+  if (!inherits(live_resp, "error") && resp_status(live_resp) < 400) {
+    payload <- tryCatch(
+      resp_body_json(live_resp, simplifyVector = TRUE),
+      error = function(e) NULL
+    )
     if (!is.null(payload$results) && length(payload$results) > 0) {
       live <- as_tibble(payload$results) |>
         transmute(
@@ -46,14 +49,34 @@ get_usaspending_context <- function(earmarks_df) {
           note = "Live USAspending result based on earmark category keywords."
         )
       if (nrow(live) > 0) {
+        live$note <- ifelse(seq_len(nrow(live)) == 1, live$note, "")
         return(live)
       }
     }
   }
 
-  tibble(
+  api_detail <- NULL
+  if (inherits(live_resp, "error")) {
+    api_detail <- live_resp$message
+  } else if (!is.null(live_resp)) {
+    status <- resp_status(live_resp)
+    body_text <- tryCatch(resp_body_string(live_resp), error = function(e) "")
+    if (nchar(body_text) > 160) {
+      body_text <- paste0(substr(body_text, 1, 160), "…")
+    }
+    api_detail <- paste0("HTTP ", status, ifelse(nchar(body_text) > 0, paste0(": ", body_text), ""))
+  }
+
+  fallback_note <- "Fallback estimate. USAspending API unavailable."
+  if (!is.null(api_detail) && nchar(api_detail) > 0) {
+    fallback_note <- paste0(fallback_note, " ", api_detail)
+  }
+
+  fallback <- tibble(
     agency = c("Department of Transportation", "Department of Education", "HHS")[seq_len(nrow(top_types))],
     amount_usd = top_types$amount_usd,
-    note = "Fallback estimate. USAspending API unavailable."
+    note = fallback_note
   )
+  fallback$note <- ifelse(seq_len(nrow(fallback)) == 1, fallback$note, "")
+  fallback
 }
