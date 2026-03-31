@@ -3,9 +3,45 @@ library(dplyr)
 library(ggplot2)
 library(DT)
 
+format_dollar_short <- function(x) {
+  vapply(
+    x,
+    function(val) {
+      if (is.na(val)) {
+        return(NA_character_)
+      }
+
+      absval <- abs(val)
+      suffix <- ""
+      scale <- 1
+
+      if (absval >= 1e12) {
+        suffix <- "T"
+        scale <- 1e12
+      } else if (absval >= 1e9) {
+        suffix <- "B"
+        scale <- 1e9
+      } else if (absval >= 1e6) {
+        suffix <- "M"
+        scale <- 1e6
+      } else if (absval >= 1e3) {
+        suffix <- "K"
+        scale <- 1e3
+      }
+
+      digits <- if (suffix == "") 0 else 1
+      out <- formatC(val / scale, format = "f", digits = digits, big.mark = ",")
+      out <- sub("\\.0$", "", out)
+      paste0("$", out, suffix)
+    },
+    character(1)
+  )
+}
+
 source("R/openfec.R")
 source("R/usaspending.R")
 source("R/earmarks.R")
+source("R/expends.R")
 source("R/translation.R")
 source("R/legislators.R")
 
@@ -28,6 +64,8 @@ ui <- fluidPage(
       plotOutput("earmark_plot", height = 300),
       h3("Campaign finance summary"),
       DTOutput("finance_table"),
+      h3("Operating expenditures (Expend22)"),
+      DTOutput("expend_table"),
       h3("USAspending context"),
       DTOutput("spending_table")
     )
@@ -65,6 +103,12 @@ server <- function(input, output, session) {
       chamber = chamber,
       state = member_state
     )
+    expends <- get_expends_for_legislator(
+      legislator,
+      cycle = input$cycle,
+      chamber = chamber,
+      state = member_state
+    )
     spending <- get_usaspending_context(earmarks)
 
     total_earmarks <- sum(earmarks$amount_usd, na.rm = TRUE)
@@ -75,6 +119,7 @@ server <- function(input, output, session) {
       member = member,
       earmarks = earmarks,
       finance = finance,
+      expends = expends,
       spending = spending,
       total_earmarks = total_earmarks,
       translation = translation
@@ -116,12 +161,23 @@ server <- function(input, output, session) {
     ggplot(x, aes(x = reorder(project_type, amount_usd, FUN = sum), y = amount_usd)) +
       geom_col(fill = "#1f77b4") +
       coord_flip() +
+      scale_y_continuous(labels = format_dollar_short) +
       labs(x = "Project type", y = "Amount (USD)") +
       theme_minimal(base_size = 12)
   })
 
   output$finance_table <- renderDT({
     datatable(results()$finance, options = list(pageLength = 5))
+  })
+
+  output$expend_table <- renderDT({
+    x <- results()$expends
+    if ("total_amount" %in% names(x)) {
+      datatable(x, options = list(pageLength = 10)) |>
+        formatCurrency("total_amount", currency = "$", digits = 0)
+    } else {
+      datatable(x, options = list(pageLength = 5))
+    }
   })
 
   output$spending_table <- renderDT({

@@ -1,6 +1,7 @@
 library(readr)
 library(dplyr)
 library(tibble)
+library(stringr)
 
 normalize_name <- function(x) {
   y <- tolower(x)
@@ -20,7 +21,7 @@ name_matches <- function(dataset_name, query_name) {
 }
 
 get_earmarks_for_legislator <- function(legislator_name) {
-  path <- "data/earmarks.csv"
+  path <- "earmarks/earmarks_master_ready.csv"
 
   if (!file.exists(path)) {
     return(tibble(
@@ -31,19 +32,25 @@ get_earmarks_for_legislator <- function(legislator_name) {
   }
 
   raw <- suppressMessages(read_csv(path, show_col_types = FALSE))
-  required_cols <- c("legislator", "project_type", "amount_usd")
+  required_cols <- c("member_name", "subcommittee", "amount_requested")
   if (!all(required_cols %in% names(raw))) {
-    stop("data/earmarks.csv must include columns: legislator, project_type, amount_usd")
+    stop("earmarks/earmarks_master_ready.csv must include columns: member_name, subcommittee, amount_requested")
   }
 
-  raw |>
-    mutate(legislator = trimws(legislator)) |>
-    rowwise() |>
-    filter(name_matches(legislator, legislator_name)) |>
-    ungroup() |>
+  query_clean <- normalize_name(legislator_name)
+  if ("member_clean" %in% names(raw)) {
+    filtered <- raw |>
+      mutate(member_clean = ifelse(is.na(member_clean), normalize_name(member_name), member_clean)) |>
+      filter(member_clean == query_clean | stringr::str_detect(member_clean, stringr::fixed(query_clean)))
+  } else {
+    filtered <- raw |>
+      filter(name_matches(member_name, legislator_name))
+  }
+
+  filtered |>
     transmute(
-      legislator = legislator,
-      project_type = project_type,
-      amount_usd = as.numeric(amount_usd)
+      legislator = member_name,
+      project_type = ifelse(is.na(subcommittee) | subcommittee == "", "Unspecified", subcommittee),
+      amount_usd = as.numeric(amount_requested)
     )
 }

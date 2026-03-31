@@ -165,6 +165,13 @@ openfec_candidate_search <- function(query, api_key, office = NULL, election_yea
   if (resp_status(resp) == 429) {
     return(structure(list(), class = "openfec_rate_limited"))
   }
+  if (resp_status(resp) >= 400) {
+    body_text <- tryCatch(resp_body_string(resp), error = function(e) "")
+    if (nchar(body_text) > 200) {
+      body_text <- paste0(substr(body_text, 1, 200), "…")
+    }
+    return(structure(list(status = resp_status(resp), message = body_text), class = "openfec_error"))
+  }
   payload <- tryCatch(resp_body_json(resp, simplifyVector = TRUE), error = function(e) NULL)
   if (is.null(payload$results) || length(payload$results) == 0) {
     assign(cache_key, NULL, envir = openfec_cache_env)
@@ -244,6 +251,13 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
             source = "Rate Limited",
             amount_usd = NA_real_,
             note = "OpenFEC rate limit hit (HTTP 429). Wait and retry."
+          ))
+        }
+        if (inherits(res, "openfec_error")) {
+          return(tibble(
+            source = "API Error",
+            amount_usd = NA_real_,
+            note = paste("OpenFEC request failed.", res$status, res$message)
           ))
         }
         if (!is.null(res) && nrow(res) > 0) {
@@ -340,4 +354,137 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
     ),
     note = paste("Candidate ID:", candidate_id)
   )
+}
+
+get_openfec_committees_for_legislator <- function(legislator, cycle = 2024, chamber = NA_character_, state = NULL) {
+  load_local_env()
+  api_key <- Sys.getenv("OPENFEC_API_KEY", unset = "")
+  if (identical(api_key, "")) {
+    return(tibble(note = "Set OPENFEC_API_KEY to fetch committee data."))
+  }
+
+  api_check <- openfec_api_check(api_key)
+  if (!is.null(api_check)) {
+    return(tibble(note = paste("OpenFEC request failed.", api_check)))
+  }
+
+  office <- ifelse(tolower(chamber) == "senate", "S", ifelse(tolower(chamber) == "house", "H", NA_character_))
+  queries <- build_query_variants(legislator)
+  if (length(queries) == 0) {
+    return(tibble(note = "No candidate found for that query."))
+  }
+
+  office_candidates <- unique(c(office, if (is.na(office)) "P" else NA_character_))
+  office_candidates <- office_candidates[!is.na(office_candidates)]
+
+  candidate_sets <- list()
+  for (q in queries) {
+    for (off in c(office_candidates, NA_character_)) {
+      attempts <- list(
+        list(q = q, off = off, year = cycle, st = state),
+        list(q = q, off = off, year = cycle, st = NULL),
+        list(q = q, off = off, year = NULL, st = state),
+        list(q = q, off = off, year = NULL, st = NULL)
+      )
+      for (a in attempts) {
+        res <- openfec_candidate_search(a$q, api_key, office = a$off, election_year = a$year, state = a$st)
+        if (inherits(res, "openfec_rate_limited")) {
+          return(tibble(note = "OpenFEC rate limit hit (HTTP 429). Wait and retry."))
+        }
+        if (inherits(res, "openfec_error")) {
+          return(tibble(note = paste("OpenFEC request failed.", res$status, res$message)))
+        }
+        if (!is.null(res) && nrow(res) > 0) {
+          candidate_sets <- append(candidate_sets, list(res))
+          break
+        }
+      }
+    }
+  }
+  candidate_sets <- Filter(Negate(is.null), candidate_sets)
+  if (length(candidate_sets) == 0) {
+    return(tibble(note = "No candidate found for that query."))
+  }
+
+  candidates <- bind_rows(candidate_sets)
+  if (!"candidate_id" %in% names(candidates)) {
+    return(tibble(note = "No candidate found for that query."))
+  }
+
+  candidates <- candidates |>
+    distinct(candidate_id, .keep_all = TRUE)
+
+  if (nrow(candidates) == 0) {
+    return(tibble(note = "No candidate found for that query."))
+  }
+
+  candidates <- candidates |>
+    mutate(
+      score_name = vapply(name, name_similarity_score, numeric(1), query_name = legislator),
+      office_match = if ("office" %in% names(candidates)) toupper(.data$office) == toupper(office) else FALSE,
+      state_match = if (!is.null(state) && "state" %in% names(candidates)) toupper(.data$state) == toupper(state) else FALSE,
+      cycle_match = if ("election_years" %in% names(candidates)) {
+        vapply(election_years, function(x) {
+          if (is.null(x)) return(FALSE)
+          any(as.integer(x) == as.integer(cycle), na.rm = TRUE)
+        }, logical(1))
+      } else {
+        FALSE
+      },
+      incumbent_flag = ifelse(is.na(incumbent_challenge_full), "", incumbent_challenge_full),
+      score = score_name +
+        ifelse(office_match, 1, 0) +
+        ifelse(state_match, 1, 0) +
+        ifelse(cycle_match, 1, 0)
+    ) |>
+    arrange(desc(score), desc(incumbent_flag == "Incumbent"))
+
+  candidate_id <- candidates$candidate_id[[1]]
+
+  committees <- list()
+  page <- 1
+  repeat {
+    req <- request(paste0("https://api.open.fec.gov/v1/candidate/", candidate_id, "/committees/")) |>
+      req_url_query(
+        api_key = api_key,
+        cycle = cycle,
+        per_page = 100,
+        page = page
+      )
+    resp <- tryCatch(req_perform(req), error = function(e) NULL)
+    if (is.null(resp)) {
+      return(tibble(note = "OpenFEC committee request failed."))
+    }
+    if (resp_status(resp) == 429) {
+      return(tibble(note = "OpenFEC rate limit hit (HTTP 429). Wait and retry."))
+    }
+    payload <- tryCatch(resp_body_json(resp, simplifyVector = TRUE), error = function(e) NULL)
+    if (is.null(payload$results) || length(payload$results) == 0) {
+      break
+    }
+    committees <- append(committees, list(as_tibble(payload$results)))
+    total_pages <- payload$pagination$pages
+    if (is.null(total_pages) || page >= total_pages) {
+      break
+    }
+    page <- page + 1
+  }
+
+  if (length(committees) == 0) {
+    return(tibble(note = "No committees returned for candidate."))
+  }
+
+  res <- bind_rows(committees)
+  if (!"committee_id" %in% names(res)) {
+    return(tibble(note = "Committee IDs unavailable for candidate."))
+  }
+
+  res |>
+    distinct(committee_id, .keep_all = TRUE) |>
+    transmute(
+      committee_id = committee_id,
+      committee_name = if ("name" %in% names(res)) name else NA_character_,
+      designation = if ("designation" %in% names(res)) designation else NA_character_,
+      committee_type = if ("committee_type" %in% names(res)) committee_type else NA_character_
+    )
 }
