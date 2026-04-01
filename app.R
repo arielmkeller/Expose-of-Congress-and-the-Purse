@@ -78,7 +78,7 @@ clean_legislator_name <- function(x) {
 }
 
 ui <- fluidPage(
-  titlePanel("Expose of Congress and the Purse"),
+  titlePanel("Congress, Cash, & Constituents: Where the Money Goes"),
   sidebarLayout(
     sidebarPanel(
       selectizeInput("state", "State", choices = NULL, multiple = FALSE),
@@ -87,21 +87,21 @@ ui <- fluidPage(
       actionButton("run", "Analyze")
     ),
     mainPanel(
-      h2("Module 1: Money into politics"),
-      h3("Member of Congress profile"),
+      h3("Member of Congress Profile"),
       tableOutput("member_profile"),
-      h3("Key totals"),
-      tableOutput("totals_in"),
-      h3("Funding translation"),
-      tableOutput("translation_in"),
-      h3("Donor mix"),
+      h2("Cash In — Campaign Money by Member"),
+      h3("Campaign Receipts"),
+      textOutput("totals_in"),
+      h3("Funding Breakdown"),
       DTOutput("donor_mix"),
-      h3("Top donor employers (proxy for industry)"),
+      h3("Top Donor Employers"),
       DTOutput("donor_employers"),
-      h3("Top donor occupations"),
+      h3("Top Donor Occupations"),
       DTOutput("donor_occupations"),
       h3("Receipts trend"),
       plotOutput("receipts_trend", height = 260),
+      h3("Putting Campaign Cash in Context"),
+      tableOutput("translation_in"),
       hr(),
       h2("Module 2: Money out into communities"),
       h3("Outflow totals"),
@@ -179,7 +179,7 @@ server <- function(input, output, session) {
     }
     selectizeInput(
       "legislator",
-      "Member of Congress (optional)",
+      "Member of Congress",
       choices = choices,
       multiple = FALSE,
       options = list(create = FALSE, placeholder = "Select a member", maxOptions = 5000)
@@ -277,13 +277,17 @@ server <- function(input, output, session) {
   output$member_profile <- renderTable({
     member <- selected_member()
     if (nrow(member) > 0) {
+      district_val <- if ("district" %in% names(member)) as.character(member$district) else NA_character_
+      district_val <- ifelse(is.na(district_val) | district_val == "" | district_val == "0" | district_val == "00",
+                             ifelse(tolower(member$chamber[[1]]) == "house", "At-Large", NA_character_),
+                             district_val)
       member |>
         transmute(
-          legislator = legislator,
-          political_affiliation = party,
-          state = state,
-          chamber = chamber,
-          district = if ("district" %in% names(member)) district else NA_character_
+          Name = legislator,
+          Party = party,
+          State = state,
+          Chamber = chamber,
+          District = district_val
         )
     } else {
       state_selected <- normalize_state_abbrev(input$state)
@@ -292,43 +296,35 @@ server <- function(input, output, session) {
         state_name_selected <- NA_character_
       }
       data.frame(
-        legislator = "State-level view",
-        political_affiliation = NA_character_,
-        state = state_name_selected,
-        chamber = NA_character_,
-        district = NA_character_
+        Name = "State-level view",
+        Party = NA_character_,
+        State = state_name_selected,
+        Chamber = NA_character_,
+        District = NA_character_
       )
     }
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$totals_in <- renderTable({
+  output$totals_in <- renderText({
     x <- results()
-    data.frame(
-      metric = c("Member of Congress", "Campaign receipts (USD)"),
-      value = c(
-        x$legislator,
-        {
-          legis_sel <- get_single(input$legislator)
-          if (is.null(legis_sel) || is.na(legis_sel) || legis_sel == "") {
-            "Select a Member of Congress"
-          } else {
-          receipts_total <- x$finance$summary |>
-            filter(source == "Total receipts") |>
-            summarize(total = sum(amount_usd, na.rm = TRUE)) |>
-            pull(total)
-          if (length(receipts_total) == 0 || is.na(receipts_total)) {
-            receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
-          }
-          if (is.na(receipts_total) || receipts_total == 0) {
-            "Unavailable"
-          } else {
-            format(round(receipts_total, 2), big.mark = ",")
-          }
-          }
-        }
-      )
-    )
-  }, striped = TRUE, bordered = TRUE, width = "100%")
+    legis_sel <- get_single(input$legislator)
+    if (is.null(legis_sel) || is.na(legis_sel) || legis_sel == "") {
+      "Select a Member of Congress"
+    } else {
+      receipts_total <- x$finance$summary |>
+        filter(source == "Total receipts") |>
+        summarize(total = sum(amount_usd, na.rm = TRUE)) |>
+        pull(total)
+      if (length(receipts_total) == 0 || is.na(receipts_total)) {
+        receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
+      }
+      if (is.na(receipts_total) || receipts_total == 0) {
+        "Unavailable"
+      } else {
+        paste0("$", format(round(receipts_total, 2), big.mark = ","))
+      }
+    }
+  })
 
   output$totals_out <- renderTable({
     x <- results()
@@ -342,7 +338,14 @@ server <- function(input, output, session) {
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
   output$translation_in <- renderTable({
-    results()$translation_in
+    results()$translation_in |>
+      select(-note) |>
+      rename(
+        Benchmark = benchmark,
+        `Cost per Unit ($)` = unit_cost_usd,
+        `How Many Units?` = estimated_units,
+        `What That Means` = interpretation
+      )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
   output$translation_out <- renderTable({
@@ -365,7 +368,26 @@ server <- function(input, output, session) {
         )
       }
     }
-    datatable(df, options = list(pageLength = 5))
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    if ("donor_type" %in% names(df)) {
+      names(df)[names(df) == "donor_type"] <- "Donor Type"
+    }
+    amount_col <- NULL
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+      amount_col <- "Amount"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 5, searching = FALSE, lengthChange = FALSE),
+      rownames = FALSE
+    )
+    if (!is.null(amount_col)) {
+      tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
+    }
+    tbl
   })
 
   output$donor_employers <- renderDT({
@@ -377,7 +399,19 @@ server <- function(input, output, session) {
         note = "Schedule A by employer returned no rows."
       )
     }
-    datatable(df, options = list(pageLength = 5))
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    amount_col <- NULL
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+      amount_col <- "Amount"
+    }
+    tbl <- datatable(df, options = list(pageLength = 5), rownames = FALSE)
+    if (!is.null(amount_col)) {
+      tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
+    }
+    tbl
   })
 
   output$donor_occupations <- renderDT({
@@ -389,7 +423,19 @@ server <- function(input, output, session) {
         note = "Schedule A by occupation returned no rows."
       )
     }
-    datatable(df, options = list(pageLength = 5))
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    amount_col <- NULL
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+      amount_col <- "Amount"
+    }
+    tbl <- datatable(df, options = list(pageLength = 5), rownames = FALSE)
+    if (!is.null(amount_col)) {
+      tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
+    }
+    tbl
   })
 
   output$spending_agencies <- renderDT({
