@@ -40,8 +40,6 @@ format_dollar_short <- function(x) {
 
 source("R/openfec.R")
 source("R/usaspending.R")
-source("R/earmarks.R")
-source("R/expends.R")
 source("R/translation.R")
 source("R/legislators.R")
 
@@ -54,20 +52,33 @@ ui <- fluidPage(
       actionButton("run", "Analyze")
     ),
     mainPanel(
+      h2("Module 1: Money into politics"),
       h3("Member profile"),
       tableOutput("member_profile"),
       h3("Key totals"),
-      tableOutput("totals"),
+      tableOutput("totals_in"),
       h3("Funding translation"),
-      tableOutput("translation"),
-      h3("Earmark categories"),
-      plotOutput("earmark_plot", height = 300),
-      h3("Campaign finance summary"),
-      DTOutput("finance_table"),
-      h3("Operating expenditures (Expend22)"),
-      DTOutput("expend_table"),
-      h3("USAspending context"),
-      DTOutput("spending_table")
+      tableOutput("translation_in"),
+      h3("Donor mix"),
+      DTOutput("donor_mix"),
+      h3("Top donor employers (proxy for industry)"),
+      DTOutput("donor_employers"),
+      h3("Top donor occupations"),
+      DTOutput("donor_occupations"),
+      h3("Receipts trend"),
+      plotOutput("receipts_trend", height = 260),
+      hr(),
+      h2("Module 2: Money out into communities"),
+      h3("Outflow totals"),
+      tableOutput("totals_out"),
+      h3("Outflow translation"),
+      tableOutput("translation_out"),
+      h3("Top recipients"),
+      DTOutput("spending_recipients"),
+      h3("Agency flow"),
+      DTOutput("spending_agencies"),
+      h3("Diagnostics"),
+      verbatimTextOutput("diagnostics")
     )
   )
 )
@@ -96,33 +107,33 @@ server <- function(input, output, session) {
     chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
     member_state <- ifelse(nrow(member) > 0, member$state[[1]], NA_character_)
 
-    earmarks <- get_earmarks_for_legislator(legislator)
     finance <- get_openfec_summary(
       legislator,
       cycle = input$cycle,
       chamber = chamber,
-      state = member_state
+      state = member_state,
+      district = ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
     )
-    expends <- get_expends_for_legislator(
-      legislator,
-      cycle = input$cycle,
-      chamber = chamber,
-      state = member_state
-    )
-    spending <- get_usaspending_context(earmarks)
+    district_value <- ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
+    spending <- get_usaspending_context(state = member_state, district = district_value)
+    receipts_total <- finance$summary |>
+      filter(source == "Total receipts") |>
+      summarize(total = sum(amount_usd, na.rm = TRUE)) |>
+      pull(total)
+    if (length(receipts_total) == 0 || is.na(receipts_total)) {
+      receipts_total <- sum(finance$summary$amount_usd, na.rm = TRUE)
+    }
 
-    total_earmarks <- sum(earmarks$amount_usd, na.rm = TRUE)
-    translation <- translate_dollars(total_earmarks)
+    translation_in <- translate_inflow(suppressWarnings(as.numeric(receipts_total)))
+    translation_out <- translate_outflow(spending$total_amount)
 
     list(
       legislator = legislator,
       member = member,
-      earmarks = earmarks,
       finance = finance,
-      expends = expends,
       spending = spending,
-      total_earmarks = total_earmarks,
-      translation = translation
+      translation_in = translation_in,
+      translation_out = translation_out
     )
   })
 
@@ -134,54 +145,157 @@ server <- function(input, output, session) {
         legislator = legislator,
         political_affiliation = party,
         state = state,
-        chamber = chamber
+        chamber = chamber,
+        district = if ("district" %in% names(member)) district else NA_character_
       )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$totals <- renderTable({
+  output$totals_in <- renderTable({
     x <- results()
     data.frame(
-      metric = c("Legislator", "Total earmarked funding (USD)", "Campaign receipts (USD)"),
+      metric = c("Legislator", "Campaign receipts (USD)"),
       value = c(
         x$legislator,
-        format(round(x$total_earmarks, 2), big.mark = ","),
-        format(round(sum(x$finance$amount_usd, na.rm = TRUE), 2), big.mark = ",")
+        format(round({
+          receipts_total <- x$finance$summary |>
+            filter(source == "Total receipts") |>
+            summarize(total = sum(amount_usd, na.rm = TRUE)) |>
+            pull(total)
+          if (length(receipts_total) == 0 || is.na(receipts_total)) {
+            receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
+          }
+          receipts_total
+        }, 2), big.mark = ",")
       )
     )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$translation <- renderTable({
-    results()$translation
+  output$totals_out <- renderTable({
+    x <- results()
+    data.frame(
+      metric = c("Legislator", "Total outflow in scope (USD)"),
+      value = c(
+        x$legislator,
+        format(round(x$spending$total_amount, 2), big.mark = ",")
+      )
+    )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$earmark_plot <- renderPlot({
-    x <- results()$earmarks
-    shiny::validate(shiny::need(nrow(x) > 0, "No earmark records available for this legislator yet."))
+  output$translation_in <- renderTable({
+    results()$translation_in
+  }, striped = TRUE, bordered = TRUE, width = "100%")
 
-    ggplot(x, aes(x = reorder(project_type, amount_usd, FUN = sum), y = amount_usd)) +
-      geom_col(fill = "#1f77b4") +
-      coord_flip() +
-      scale_y_continuous(labels = format_dollar_short) +
-      labs(x = "Project type", y = "Amount (USD)") +
+  output$translation_out <- renderTable({
+    results()$translation_out
+  }, striped = TRUE, bordered = TRUE, width = "100%")
+
+  output$donor_mix <- renderDT({
+    df <- results()$finance$donor_types
+    if (nrow(df) == 0) {
+      fallback <- results()$finance$summary |>
+        filter(source %in% c("Individuals", "PACs")) |>
+        transmute(donor_type = source, amount_usd = amount_usd, note = note)
+      if (nrow(fallback) > 0) {
+        df <- fallback
+      } else {
+        df <- data.frame(
+          donor_type = "No data",
+          amount_usd = NA_real_,
+          note = "Check OpenFEC API key or candidate match."
+        )
+      }
+    }
+    datatable(df, options = list(pageLength = 5))
+  })
+
+  output$donor_employers <- renderDT({
+    df <- results()$finance$industries
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        industry = "No data",
+        amount_usd = NA_real_,
+        note = "Schedule A by employer returned no rows."
+      )
+    }
+    datatable(df, options = list(pageLength = 5))
+  })
+
+  output$donor_occupations <- renderDT({
+    df <- results()$finance$occupations
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        occupation = "No data",
+        amount_usd = NA_real_,
+        note = "Schedule A by occupation returned no rows."
+      )
+    }
+    datatable(df, options = list(pageLength = 5))
+  })
+
+  output$spending_agencies <- renderDT({
+    df <- results()$spending$agencies
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        agency = "No data",
+        amount_usd = NA_real_,
+        note = "USAspending returned no rows."
+      )
+    }
+    datatable(df, options = list(pageLength = 5))
+  })
+
+  output$spending_recipients <- renderDT({
+    df <- results()$spending$recipients
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        recipient = "No data",
+        amount_usd = NA_real_,
+        note = "USAspending returned no rows."
+      )
+    }
+    datatable(df, options = list(pageLength = 5))
+  })
+
+  output$receipts_trend <- renderPlot({
+    x <- results()$finance$trend
+    shiny::validate(shiny::need(nrow(x) > 0, "No campaign finance records available."))
+
+    ggplot(x, aes(x = factor(period, levels = unique(period)), y = amount_usd)) +
+      geom_col(fill = "#0b7285") +
+      labs(x = NULL, y = "Amount (USD)") +
       theme_minimal(base_size = 12)
   })
 
-  output$finance_table <- renderDT({
-    datatable(results()$finance, options = list(pageLength = 5))
-  })
-
-  output$expend_table <- renderDT({
-    x <- results()$expends
-    if ("total_amount" %in% names(x)) {
-      datatable(x, options = list(pageLength = 10)) |>
-        formatCurrency("total_amount", currency = "$", digits = 0)
-    } else {
-      datatable(x, options = list(pageLength = 5))
-    }
-  })
-
-  output$spending_table <- renderDT({
-    datatable(results()$spending, options = list(pageLength = 5))
+  output$diagnostics <- renderText({
+    x <- results()
+    fec_diag <- x$finance$diagnostics
+    spend_diag <- x$spending$diagnostics
+    lines <- c(
+      "OpenFEC diagnostics:",
+      paste0("api_key_present: ", fec_diag$api_key_present),
+      paste0("candidate_id: ", fec_diag$candidate_id),
+      paste0("cycle_used: ", fec_diag$cycle_used),
+      paste0("principal_committees: ", paste(fec_diag$principal_committees, collapse = ", ")),
+      paste0("state_used: ", ifelse(is.null(fec_diag$state_used), "", fec_diag$state_used)),
+      paste0("error: ", ifelse(is.null(fec_diag$error), "", fec_diag$error)),
+      if (!is.null(fec_diag$candidate_options) && length(fec_diag$candidate_options) > 0) {
+        c(
+          "candidate_options:",
+          paste0("  - ", fec_diag$candidate_options)
+        )
+      } else {
+        NULL
+      },
+      "",
+      "USAspending diagnostics:",
+      paste0("state: ", spend_diag$state),
+      paste0("district: ", spend_diag$district),
+      paste0("status_agencies: ", spend_diag$status_agencies),
+      paste0("status_recipients: ", spend_diag$status_recipients),
+      paste0("geo_failed_agencies: ", spend_diag$geo_failed_agencies),
+      paste0("geo_failed_recipients: ", spend_diag$geo_failed_recipients)
+    )
+    paste(lines, collapse = "\n")
   })
 }
 

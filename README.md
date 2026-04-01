@@ -1,9 +1,8 @@
 # Expose of Congress and the Purse
 
-Interactive Shiny tool to connect a legislator with:
-- earmarked federal funding
-- campaign finance activity
-- plain-language dollar translations
+Interactive Shiny tool with two modules:
+- Money into politics (FEC): who funds a member, donor mix, totals, and trends
+- Money out into communities (USAspending): agencies and recipients by state/district
 
 ## Quick start
 
@@ -27,14 +26,7 @@ Option B: shell profile or `.Renviron`
 export OPENFEC_API_KEY="your_openfec_key_here"
 ```
 
-3. Optional: use local earmark data.
-- Copy `data/earmarks_sample.csv` to `data/earmarks.csv`
-- Replace with your Appropriations dataset using columns:
-  - `legislator`
-  - `project_type`
-  - `amount_usd`
-
-4. Run app:
+3. Run app:
 
 ```r
 shiny::runApp()
@@ -46,5 +38,5 @@ shiny::runApp()
 - Member metadata: political affiliation, state, and chamber shown in the app.
 - OpenFEC: live call if `OPENFEC_API_KEY` is set, fallback sample output otherwise.
 - USAspending: live keyword-based call to `spending_by_category` with fallback context when unavailable.
-- Translation layer: benchmark-based estimates from `data/benchmarks.csv`.
+- Translation layer: benchmark-based estimates from `data/benchmarks_in.csv` (inflow) and `data/benchmarks_out.csv` (outflow).
 - Legislator matching: normalized/fuzzy matching for earmark records and improved candidate ranking for OpenFEC search.

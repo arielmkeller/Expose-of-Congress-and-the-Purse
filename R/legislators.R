@@ -17,11 +17,16 @@ get_legislators_reference <- function() {
   }
 
   rows <- lapply(payload$objects, function(x) {
+    district_val <- NA_character_
+    if (!is.null(x$district) && !is.na(x$district)) {
+      district_val <- sprintf("%02d", as.integer(x$district))
+    }
     list(
       legislator = as.character(x$person$name),
       party = as.character(x$party),
       state = as.character(x$state),
-      chamber = ifelse(as.character(x$role_type) == "senator", "Senate", "House")
+      chamber = ifelse(as.character(x$role_type) == "senator", "Senate", "House"),
+      district = district_val
     )
   })
 
@@ -42,6 +47,7 @@ fallback_legislators_reference <- function() {
     legislator = c("Alexandria Ocasio-Cortez", "Chuck Schumer", "Ted Cruz", "Cory Booker"),
     party = c("Democrat", "Democrat", "Republican", "Democrat"),
     state = c("NY", "NY", "TX", "NJ"),
-    chamber = c("House", "Senate", "Senate", "Senate")
+    chamber = c("House", "Senate", "Senate", "Senate"),
+    district = c("14", NA_character_, NA_character_, NA_character_)
   )
 }

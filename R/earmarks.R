@@ -34,7 +34,19 @@ get_earmarks_for_legislator <- function(legislator_name) {
   raw <- suppressMessages(read_csv(path, show_col_types = FALSE))
   required_cols <- c("member_name", "subcommittee", "amount_requested")
   if (!all(required_cols %in% names(raw))) {
-    stop("earmarks/earmarks_master_ready.csv must include columns: member_name, subcommittee, amount_requested")
+    alt_cols <- c("legislator", "project_type", "amount_usd")
+    if (!all(alt_cols %in% names(raw))) {
+      stop("earmarks data must include member_name/subcommittee/amount_requested or legislator/project_type/amount_usd")
+    }
+    return(raw |>
+      mutate(legislator = trimws(legislator)) |>
+      rowwise() |>
+      filter(name_matches(legislator, legislator_name)) |>
+      ungroup() |>
+      mutate(
+        project_type = as.character(project_type),
+        amount_usd = as.numeric(amount_usd)
+      ))
   }
 
   query_clean <- normalize_name(legislator_name)
