@@ -19,8 +19,12 @@ translate_dollars <- function(total_usd, benchmarks_path = "data/benchmarks.csv"
     ))
   }
 
-  benchmarks <- suppressMessages(read_csv(benchmarks_path, show_col_types = FALSE)) |>
-    mutate(unit_cost_usd = suppressWarnings(as.numeric(unit_cost_usd)))
+  benchmarks <- suppressMessages(read_csv(
+    benchmarks_path,
+    show_col_types = FALSE,
+    col_types = cols(.default = col_character())
+  )) |>
+    mutate(unit_cost_usd = parse_number(unit_cost_usd))
 
   benchmarks |>
     mutate(

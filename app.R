@@ -43,17 +43,52 @@ source("R/usaspending.R")
 source("R/translation.R")
 source("R/legislators.R")
 
+state_lookup <- tibble(
+  state_name = c(state.name, "District of Columbia", "Puerto Rico", "U.S. Virgin Islands", "Guam", "American Samoa", "Northern Mariana Islands"),
+  state_abbrev = c(state.abb, "DC", "PR", "VI", "GU", "AS", "MP")
+)
+
+clean_legislator_name <- function(x) {
+  one <- function(val) {
+    y <- as.character(val)
+    y <- tryCatch(iconv(y, to = "ASCII//TRANSLIT"), error = function(e) y)
+    y <- sub("\\s*\\[.*\\]\\s*$", "", y)
+    y <- gsub("\\([^\\)]*\\)", "", y)
+    y <- gsub("\\b(rep\\.?|representative|sen\\.?|senator|delegate|del\\.?|hon\\.?|mr\\.?|mrs\\.?|ms\\.?|commish\\.?|commissioner)\\b", "", y, ignore.case = TRUE)
+    y <- gsub("[^A-Za-z\\s'-]", " ", y)
+    y <- gsub("\\s+", " ", y)
+    y <- trimws(y)
+    y <- sub("\\s+[A-Z]{1,2}-[A-Z]{2}\\d*$", "", y)
+    if (identical(y, "")) {
+      return(y)
+    }
+    tokens <- unlist(strsplit(y, " "))
+    tokens <- tokens[tokens != ""]
+    suffixes <- c("jr", "sr", "ii", "iii", "iv", "v")
+    tokens <- tokens[!tolower(tokens) %in% suffixes]
+    if (length(tokens) == 1) {
+      return(tokens[[1]])
+    }
+    paste(tokens[[1]], tokens[[length(tokens)]])
+  }
+  if (length(x) == 1) {
+    return(one(x))
+  }
+  vapply(x, one, character(1))
+}
+
 ui <- fluidPage(
   titlePanel("Expose of Congress and the Purse"),
   sidebarLayout(
     sidebarPanel(
-      selectizeInput("legislator", "Legislator", choices = NULL, multiple = FALSE),
+      selectizeInput("state", "State", choices = NULL, multiple = FALSE),
+      uiOutput("legislator_ui"),
       numericInput("cycle", "Election cycle", value = 2024, min = 2000, step = 2),
       actionButton("run", "Analyze")
     ),
     mainPanel(
       h2("Module 1: Money into politics"),
-      h3("Member profile"),
+      h3("Member of Congress profile"),
       tableOutput("member_profile"),
       h3("Key totals"),
       tableOutput("totals_in"),
@@ -77,43 +112,144 @@ ui <- fluidPage(
       DTOutput("spending_recipients"),
       h3("Agency flow"),
       DTOutput("spending_agencies"),
-      h3("Diagnostics"),
-      verbatimTextOutput("diagnostics")
+      hr(),
+      h3("Member list diagnostics"),
+      verbatimTextOutput("member_debug")
     )
   )
 )
 
 server <- function(input, output, session) {
-  legislators_ref <- get_legislators_reference()
-  updateSelectizeInput(
-    session,
-    "legislator",
-    choices = legislators_ref$legislator,
-    selected = legislators_ref$legislator[[1]],
-    server = TRUE
-  )
+  get_single <- function(x) {
+    if (is.null(x) || length(x) == 0) {
+      return(NA_character_)
+    }
+    as.character(x[[1]])
+  }
 
-  selected_member <- reactive({
-    req(input$legislator)
-    legislators_ref |>
-      filter(legislator == input$legislator) |>
-      slice(1)
+  normalize_state_abbrev <- function(x) {
+    s <- trimws(get_single(x))
+    if (is.na(s) || s == "") {
+      return(NA_character_)
+    }
+    if (nchar(s) == 2) {
+      return(toupper(s))
+    }
+    ab <- state_lookup$state_abbrev[state_lookup$state_name == s]
+    if (length(ab) == 0) {
+      return(NA_character_)
+    }
+    toupper(ab[[1]])
+  }
+
+  cache_path <- "/Users/ariel/Desktop/Expose-of-Congress-and-the-Purse/data/legislators_cache.csv"
+  if (file.exists(cache_path)) {
+    cached <- tryCatch(read.csv(cache_path, stringsAsFactors = FALSE), error = function(e) NULL)
+    if (!is.null(cached) && nrow(cached) > 0) {
+      legislators_ref <- as_tibble(cached)
+    } else {
+      legislators_ref <- get_legislators_reference()
+    }
+  } else {
+    legislators_ref <- get_legislators_reference()
+  }
+  legislators_ref <- legislators_ref |>
+    mutate(
+      state = toupper(state),
+      legislator_clean = clean_legislator_name(legislator)
+    ) |>
+    filter(!is.na(legislator_clean), legislator_clean != "")
+  message("Loaded legislators: ", nrow(legislators_ref), " from cache: ", cache_path)
+  state_choices <- setNames(state_lookup$state_abbrev, state_lookup$state_name)
+  updateSelectizeInput(session, "state", choices = state_choices, selected = state_lookup$state_abbrev[[1]], server = TRUE)
+
+  output$legislator_ui <- renderUI({
+    st <- normalize_state_abbrev(input$state)
+    if (nrow(legislators_ref) == 0) {
+      choices <- c("")
+    } else if (is.null(st) || is.na(st) || st == "") {
+      choices <- c("", sort(unique(legislators_ref$legislator_clean)))
+    } else {
+      filtered <- legislators_ref |>
+        filter(state == toupper(st)) |>
+        pull(legislator_clean) |>
+        unique() |>
+        sort()
+      choices <- c("", filtered)
+    }
+    selectizeInput(
+      "legislator",
+      "Member of Congress (optional)",
+      choices = choices,
+      multiple = FALSE,
+      options = list(create = FALSE, placeholder = "Select a member", maxOptions = 5000)
+    )
   })
 
+  selected_member <- reactive({
+    legis <- get_single(input$legislator)
+    if (is.null(legis) || is.na(legis) || legis == "") {
+      return(tibble())
+    }
+    st <- normalize_state_abbrev(input$state)
+    out <- legislators_ref |>
+      filter(legislator_clean == legis)
+    if (!is.na(st) && nrow(out) > 0) {
+      out_state <- out |> filter(state == st)
+      if (nrow(out_state) > 0) {
+        return(out_state |> slice(1))
+      }
+    }
+    out |> slice(1)
+  })
+
+  build_openfec_placeholder <- function(state, note) {
+    list(
+      diagnostics = list(
+        api_key_present = !identical(Sys.getenv("OPENFEC_API_KEY", unset = ""), ""),
+        candidate_id = NA_character_,
+        cycle_used = NA_integer_,
+        principal_committees = character(),
+        state_used = state,
+        error = note
+      ),
+      summary = tibble(
+        source = "OpenFEC unavailable",
+        amount_usd = NA_real_,
+        note = note
+      ),
+      donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
+      industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
+      occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      trend = tibble(period = character(), amount_usd = numeric(), note = "")
+    )
+  }
+
   results <- eventReactive(input$run, {
-    legislator <- trimws(input$legislator)
-    shiny::validate(shiny::need(nchar(legislator) > 0, "Enter a legislator name."))
+    state_selected <- normalize_state_abbrev(input$state)
+    state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
+    if (length(state_name_selected) == 0) {
+      state_name_selected <- NA_character_
+    }
+    shiny::validate(shiny::need(!is.na(state_selected) && nchar(state_selected) > 0, "Select a state."))
+
+    legislator <- trimws(get_single(input$legislator))
     member <- selected_member()
     chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
-    member_state <- ifelse(nrow(member) > 0, member$state[[1]], NA_character_)
+    member_state <- ifelse(nrow(member) > 0, member$state[[1]], state_selected)
 
-    finance <- get_openfec_summary(
-      legislator,
-      cycle = input$cycle,
-      chamber = chamber,
-      state = member_state,
-      district = ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
-    )
+    if (!is.null(legislator) && legislator != "") {
+      finance <- get_openfec_summary(
+        legislator,
+        cycle = input$cycle,
+        chamber = ifelse(nrow(member) > 0, chamber, NA_character_),
+        state = member_state,
+        district = ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
+      )
+    } else {
+      finance <- build_openfec_placeholder(member_state, "Select a legislator for OpenFEC campaign finance data.")
+    }
+
     district_value <- ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
     spending <- get_usaspending_context(state = member_state, district = district_value)
     receipts_total <- finance$summary |>
@@ -128,7 +264,8 @@ server <- function(input, output, session) {
     translation_out <- translate_outflow(spending$total_amount)
 
     list(
-      legislator = legislator,
+      legislator = ifelse(is.null(legislator) || legislator == "", paste0("State: ", state_name_selected), legislator),
+      state_selected = state_selected,
       member = member,
       finance = finance,
       spending = spending,
@@ -139,24 +276,42 @@ server <- function(input, output, session) {
 
   output$member_profile <- renderTable({
     member <- selected_member()
-    shiny::validate(shiny::need(nrow(member) > 0, "Member profile unavailable."))
-    member |>
-      transmute(
-        legislator = legislator,
-        political_affiliation = party,
-        state = state,
-        chamber = chamber,
-        district = if ("district" %in% names(member)) district else NA_character_
+    if (nrow(member) > 0) {
+      member |>
+        transmute(
+          legislator = legislator,
+          political_affiliation = party,
+          state = state,
+          chamber = chamber,
+          district = if ("district" %in% names(member)) district else NA_character_
+        )
+    } else {
+      state_selected <- normalize_state_abbrev(input$state)
+      state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
+      if (length(state_name_selected) == 0) {
+        state_name_selected <- NA_character_
+      }
+      data.frame(
+        legislator = "State-level view",
+        political_affiliation = NA_character_,
+        state = state_name_selected,
+        chamber = NA_character_,
+        district = NA_character_
       )
+    }
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
   output$totals_in <- renderTable({
     x <- results()
     data.frame(
-      metric = c("Legislator", "Campaign receipts (USD)"),
+      metric = c("Member of Congress", "Campaign receipts (USD)"),
       value = c(
         x$legislator,
-        format(round({
+        {
+          legis_sel <- get_single(input$legislator)
+          if (is.null(legis_sel) || is.na(legis_sel) || legis_sel == "") {
+            "Select a Member of Congress"
+          } else {
           receipts_total <- x$finance$summary |>
             filter(source == "Total receipts") |>
             summarize(total = sum(amount_usd, na.rm = TRUE)) |>
@@ -164,8 +319,13 @@ server <- function(input, output, session) {
           if (length(receipts_total) == 0 || is.na(receipts_total)) {
             receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
           }
-          receipts_total
-        }, 2), big.mark = ",")
+          if (is.na(receipts_total) || receipts_total == 0) {
+            "Unavailable"
+          } else {
+            format(round(receipts_total, 2), big.mark = ",")
+          }
+          }
+        }
       )
     )
   }, striped = TRUE, bordered = TRUE, width = "100%")
@@ -173,7 +333,7 @@ server <- function(input, output, session) {
   output$totals_out <- renderTable({
     x <- results()
     data.frame(
-      metric = c("Legislator", "Total outflow in scope (USD)"),
+      metric = c("Member of Congress", "Total outflow in scope (USD)"),
       value = c(
         x$legislator,
         format(round(x$spending$total_amount, 2), big.mark = ",")
@@ -266,37 +426,32 @@ server <- function(input, output, session) {
       theme_minimal(base_size = 12)
   })
 
-  output$diagnostics <- renderText({
-    x <- results()
-    fec_diag <- x$finance$diagnostics
-    spend_diag <- x$spending$diagnostics
-    lines <- c(
-      "OpenFEC diagnostics:",
-      paste0("api_key_present: ", fec_diag$api_key_present),
-      paste0("candidate_id: ", fec_diag$candidate_id),
-      paste0("cycle_used: ", fec_diag$cycle_used),
-      paste0("principal_committees: ", paste(fec_diag$principal_committees, collapse = ", ")),
-      paste0("state_used: ", ifelse(is.null(fec_diag$state_used), "", fec_diag$state_used)),
-      paste0("error: ", ifelse(is.null(fec_diag$error), "", fec_diag$error)),
-      if (!is.null(fec_diag$candidate_options) && length(fec_diag$candidate_options) > 0) {
-        c(
-          "candidate_options:",
-          paste0("  - ", fec_diag$candidate_options)
-        )
-      } else {
-        NULL
-      },
-      "",
-      "USAspending diagnostics:",
-      paste0("state: ", spend_diag$state),
-      paste0("district: ", spend_diag$district),
-      paste0("status_agencies: ", spend_diag$status_agencies),
-      paste0("status_recipients: ", spend_diag$status_recipients),
-      paste0("geo_failed_agencies: ", spend_diag$geo_failed_agencies),
-      paste0("geo_failed_recipients: ", spend_diag$geo_failed_recipients)
+  output$member_debug <- renderText({
+    st <- normalize_state_abbrev(input$state)
+    st_name <- state_lookup$state_name[state_lookup$state_abbrev == st]
+    if (length(st_name) == 0) {
+      st_name <- NA_character_
+    }
+    total_members <- nrow(legislators_ref)
+    state_members <- if (!is.na(st)) {
+      sum(legislators_ref$state == toupper(st), na.rm = TRUE)
+    } else {
+      NA_integer_
+    }
+    sample_names <- legislators_ref |>
+      filter(state == toupper(st)) |>
+      pull(legislator_clean) |>
+      unique() |>
+      sort()
+    sample_names <- head(sample_names, 10)
+    paste0(
+      "Total cached members: ", total_members, "\n",
+      "Selected state: ", st_name, " (", st, ")\n",
+      "Members in state: ", state_members, "\n",
+      "Sample names: ", paste(sample_names, collapse = ", ")
     )
-    paste(lines, collapse = "\n")
   })
+
 }
 
 shinyApp(ui, server)

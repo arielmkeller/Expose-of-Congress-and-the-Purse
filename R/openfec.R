@@ -152,6 +152,58 @@ sanitize_candidate_id <- function(x) {
   y
 }
 
+pick_first_numeric <- function(res, fields) {
+  for (f in fields) {
+    if (!is.null(res[[f]])) {
+      val <- suppressWarnings(as.numeric(res[[f]]))
+      if (!is.na(val)) {
+        return(val)
+      }
+    }
+  }
+  NA_real_
+}
+
+openfec_committee_totals <- function(committee_id, cycle, api_key) {
+  if (is.null(committee_id) || is.na(committee_id) || !nzchar(committee_id)) {
+    return(list(error = "Missing committee_id"))
+  }
+  req <- request(paste0("https://api.open.fec.gov/v1/committee/", committee_id, "/totals/")) |>
+    req_error(is_error = function(resp) FALSE) |>
+    req_url_query(
+      cycle = cycle,
+      api_key = api_key,
+      per_page = 1
+    )
+  resp <- tryCatch(req_perform(req), error = function(e) e)
+  if (inherits(resp, "error")) {
+    return(list(error = resp$message))
+  }
+  if (resp_status(resp) >= 400) {
+    body_text <- tryCatch(resp_body_string(resp), error = function(e) "")
+    if (nchar(body_text) > 160) {
+      body_text <- paste0(substr(body_text, 1, 160), "…")
+    }
+    # Fallback to plural endpoint
+    req2 <- request("https://api.open.fec.gov/v1/committee/totals/") |>
+      req_error(is_error = function(resp) FALSE) |>
+      req_url_query(
+        committee_id = committee_id,
+        cycle = cycle,
+        api_key = api_key,
+        per_page = 1
+      )
+    resp2 <- tryCatch(req_perform(req2), error = function(e) e)
+    if (!inherits(resp2, "error") && resp_status(resp2) < 400) {
+      json2 <- resp_body_json(resp2, simplifyVector = TRUE)
+      return(list(json = json2))
+    }
+    return(list(error = paste0("HTTP ", resp_status(resp), ": ", body_text)))
+  }
+  json <- resp_body_json(resp, simplifyVector = TRUE)
+  list(json = json)
+}
+
 format_district <- function(x) {
   if (is.null(x) || is.na(x) || !nzchar(as.character(x))) {
     return(NA_character_)
@@ -174,12 +226,12 @@ extract_principal_committee_ids <- function(candidate_row) {
     }
   }
   if (is.list(committees)) {
-    ids <- vapply(committees, function(x) {
-      if (is.null(x)) return(NA_character_)
+    ids <- unlist(lapply(committees, function(x) {
+      if (is.null(x)) return(character())
       if (!is.null(x$committee_id)) return(as.character(x$committee_id))
-      NA_character_
-    }, character(1))
-    return(unique(ids[!is.na(ids)]))
+      character()
+    }), use.names = FALSE)
+    return(unique(ids[ids != ""]))
   }
   character()
 }
@@ -499,6 +551,29 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
         source = "API Error",
         amount_usd = NA_real_,
         note = paste("OpenFEC request failed.", api_check)
+      ),
+      donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
+      industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
+      occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      trend = tibble(period = character(), amount_usd = numeric(), note = "")
+    ))
+  }
+
+  territory_states <- c("PR", "VI", "GU", "AS", "MP")
+  if (!is.null(state) && !is.na(state) && toupper(state) %in% territory_states) {
+    return(list(
+      diagnostics = list(
+        api_key_present = TRUE,
+        candidate_id = NA_character_,
+        cycle_used = NA_integer_,
+        principal_committees = character(),
+        state_used = toupper(state),
+        error = paste0("OpenFEC unavailable for territory ", toupper(state))
+      ),
+      summary = tibble(
+        source = "Unavailable",
+        amount_usd = NA_real_,
+        note = paste0("OpenFEC data not available for territory ", toupper(state), ".")
       ),
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
@@ -857,10 +932,9 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
     if (is.null(cycle_value) || is.na(cycle_value)) {
       return(NULL)
     }
-    totals_req <- request("https://api.open.fec.gov/v1/candidate/totals/") |>
+    totals_req <- request(paste0("https://api.open.fec.gov/v1/candidate/", candidate_id, "/totals/")) |>
       req_error(is_error = function(resp) FALSE) |>
       req_url_query(
-        candidate_id = candidate_id,
         cycle = cycle_value,
         api_key = api_key,
         per_page = 1
@@ -874,6 +948,28 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       if (nchar(body_text) > 160) {
         body_text <- paste0(substr(body_text, 1, 160), "…")
       }
+      # Fallback to plural endpoint if needed
+      totals_req2 <- request("https://api.open.fec.gov/v1/candidates/totals/") |>
+        req_error(is_error = function(resp) FALSE) |>
+        req_url_query(
+          candidate_id = candidate_id,
+          cycle = cycle_value,
+          api_key = api_key,
+          per_page = 1
+        )
+      totals_resp2 <- tryCatch(req_perform(totals_req2), error = function(e) e)
+      if (!inherits(totals_resp2, "error") && resp_status(totals_resp2) < 400) {
+        totals_json2 <- resp_body_json(totals_resp2, simplifyVector = TRUE)
+        return(list(json = totals_json2))
+      }
+      body_text2 <- if (!inherits(totals_resp2, "error")) {
+        tryCatch(resp_body_string(totals_resp2), error = function(e) "")
+      } else {
+        totals_resp2$message
+      }
+      if (nchar(body_text2) > 160) {
+        body_text2 <- paste0(substr(body_text2, 1, 160), "…")
+      }
       return(list(error = paste0("HTTP ", resp_status(totals_resp), ": ", body_text)))
     }
     totals_json <- resp_body_json(totals_resp, simplifyVector = TRUE)
@@ -883,6 +979,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
   totals_json <- NULL
   totals_error <- NULL
   cycle_used <- NA_integer_
+  using_committee_totals <- FALSE
+  committee_id_used <- NA_character_
   for (i in seq_len(nrow(candidates))) {
     candidate_id_try <- sanitize_candidate_id(candidates$candidate_id[[i]])
     if (is.na(candidate_id_try)) {
@@ -927,7 +1025,21 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       break
     }
     if (!is.null(totals_error) && grepl("Invalid candidate_id", totals_error, fixed = TRUE)) {
-      next
+      # Try committee totals as a fallback when candidate totals are rejected
+      if (length(principal_committees) > 0) {
+        committee_id_try <- principal_committees[[1]]
+        for (cyc in cycles_to_try) {
+          comm_attempt <- openfec_committee_totals(committee_id_try, cyc, api_key)
+          if (!is.null(comm_attempt$json)) {
+            totals_json <- comm_attempt$json
+            cycle_used <- cyc
+            using_committee_totals <- TRUE
+            committee_id_used <- committee_id_try
+            break
+          }
+          totals_error <- comm_attempt$error
+        }
+      }
     }
   }
 
@@ -975,18 +1087,44 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
   }
 
   res <- totals_json$results[1, ]
-  cycle_note <- if (!is.null(cycle_used) && !is.na(cycle_used)) {
-    paste("Candidate ID:", candidate_id, "(cycle used:", cycle_used, ")")
+  cycle_note <- if (using_committee_totals) {
+    if (!is.null(cycle_used) && !is.na(cycle_used)) {
+      paste("Committee ID:", committee_id_used, "(cycle used:", cycle_used, ")")
+    } else {
+      paste("Committee ID:", committee_id_used)
+    }
   } else {
-    paste("Candidate ID:", candidate_id)
+    if (!is.null(cycle_used) && !is.na(cycle_used)) {
+      paste("Candidate ID:", candidate_id, "(cycle used:", cycle_used, ")")
+    } else {
+      paste("Candidate ID:", candidate_id)
+    }
   }
+
+  receipts_individuals <- pick_first_numeric(res, c(
+    "receipts_from_individuals",
+    "individual_contributions",
+    "individual_itemized_contributions",
+    "individual_unitemized_contributions"
+  ))
+  receipts_pacs <- pick_first_numeric(res, c(
+    "receipts_from_pacs",
+    "other_political_committee_contributions",
+    "contributions_from_other_political_committees",
+    "party_committee_contributions"
+  ))
+  total_receipts <- pick_first_numeric(res, c(
+    "receipts",
+    "total_receipts",
+    "adjusted_receipts"
+  ))
 
   summary <- tibble(
     source = c("Individuals", "PACs", "Total receipts"),
     amount_usd = c(
-      as.numeric(res$receipts_from_individuals),
-      as.numeric(res$receipts_from_pacs),
-      as.numeric(res$receipts)
+      receipts_individuals,
+      receipts_pacs,
+      total_receipts
     ),
     note = cycle_note
   )
