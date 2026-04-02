@@ -1,6 +1,6 @@
 benchmark_name,unit_label,unit_cost_usd
-Public school teachers (annual salary),teachers for one year,65000
-Road repaving (one lane-mile),lane-miles repaved,1000000
-Transit buses,buses purchased,550000
-Primary care visit,healthcare visits,200
-Housing voucher (annual),vouchers for one year,12000
+Annual public school teacher salary,teachers for one year,65000
+One lane-mile road repavement,lane-miles repaved,1000000
+One transit bus,buses purchased,550000
+One primary care visit,healthcare visits,200
+Annual housing voucher for one family,vouchers for one year,12000

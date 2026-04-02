@@ -42,6 +42,7 @@ source("R/openfec.R")
 source("R/usaspending.R")
 source("R/translation.R")
 source("R/legislators.R")
+source("R/congress_api.R")
 
 state_lookup <- tibble(
   state_name = c(state.name, "District of Columbia", "Puerto Rico", "U.S. Virgin Islands", "Guam", "American Samoa", "Northern Mariana Islands"),
@@ -78,43 +79,478 @@ clean_legislator_name <- function(x) {
 }
 
 ui <- fluidPage(
-  titlePanel("Congress, Cash, & Constituents: Where the Money Goes"),
-  sidebarLayout(
-    sidebarPanel(
-      selectizeInput("state", "State", choices = NULL, multiple = FALSE),
-      uiOutput("legislator_ui"),
-      numericInput("cycle", "Election cycle", value = 2024, min = 2000, step = 2),
-      actionButton("run", "Analyze")
+  tags$head(
+    tags$link(
+      rel = "stylesheet",
+      href = "https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&family=Source+Serif+4:wght@500;700&display=swap"
     ),
-    mainPanel(
-      h3("Member of Congress Profile"),
-      tableOutput("member_profile"),
-      h2("Cash In — Campaign Money by Member"),
-      h3("Campaign Receipts"),
-      textOutput("totals_in"),
-      h3("Funding Breakdown"),
-      DTOutput("donor_mix"),
-      h3("Top Donor Employers"),
-      DTOutput("donor_employers"),
-      h3("Top Donor Occupations"),
-      DTOutput("donor_occupations"),
-      h3("Receipts trend"),
-      plotOutput("receipts_trend", height = 260),
-      h3("Putting Campaign Cash in Context"),
-      tableOutput("translation_in"),
-      hr(),
-      h2("Module 2: Money out into communities"),
-      h3("Outflow totals"),
-      tableOutput("totals_out"),
-      h3("Outflow translation"),
-      tableOutput("translation_out"),
-      h3("Top recipients"),
-      DTOutput("spending_recipients"),
-      h3("Agency flow"),
-      DTOutput("spending_agencies"),
-      hr(),
-      h3("Member list diagnostics"),
-      verbatimTextOutput("member_debug")
+    tags$style(HTML("
+      :root {
+        --ink: #111827;
+        --muted: #6b7280;
+        --accent: #00887c;
+        --accent-soft: #e6f4f7;
+        --panel: #ffffff;
+        --panel-border: #e5e7eb;
+        --bg: #f8fafc;
+      }
+
+      body, .container-fluid,
+      .shiny-input-container, .form-control, .selectize-input,
+      table.dataTable, table.dataTable th, table.dataTable td,
+      .dataTables_wrapper, .dataTables_filter, .dataTables_length, .dataTables_info,
+      .dataTables_paginate, .dataTables_wrapper input, .dataTables_wrapper select {
+        font-family: 'Source Sans 3', system-ui, -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      h1, h2, h3 {
+        font-family: 'Source Serif 4', serif;
+        letter-spacing: -0.01em;
+      }
+
+      h1 {
+        font-size: 2.1rem;
+        margin-bottom: 0.35rem;
+      }
+
+      h2 {
+        font-size: 1.5rem;
+        margin-top: 1.5rem;
+        margin-bottom: 0.6rem;
+      }
+
+      h3 {
+        font-size: 1.25rem;
+        margin-top: 1.2rem;
+        margin-bottom: 0.5rem;
+      }
+
+      .title-panel {
+        padding: 1.25rem 1.5rem 1rem 1.5rem;
+        border-bottom: 1px solid var(--panel-border);
+        margin-bottom: 1.2rem;
+        background: var(--panel);
+      }
+
+      .title-panel .subtitle {
+        color: var(--muted);
+        font-size: 1rem;
+        margin-top: 0.2rem;
+      }
+
+      .sidebar {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        padding: 1rem 1rem 0.8rem 1rem;
+      }
+
+      .map-panel {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 0.8rem 0 0.4rem 0;
+      }
+
+      .main-wide {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 1.2rem 2rem 1.2rem;
+      }
+
+      .section-card {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: 14px;
+        padding: 1.2rem 1.4rem;
+        margin-bottom: 1.2rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+      }
+
+      .sub-card {
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        padding: 0.9rem 1rem;
+        margin-bottom: 0.9rem;
+        background: #fbfcfd;
+      }
+
+      .sub-card-title {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+      }
+
+      .stat-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-top: 0.2rem;
+      }
+
+      .stat-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: var(--ink);
+        margin-top: 0.3rem;
+      }
+
+      .custom-benchmark {
+        margin-top: 0.7rem;
+        padding-top: 0.6rem;
+        border-top: 1px dashed var(--panel-border);
+      }
+
+      .custom-title {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-bottom: 0.4rem;
+      }
+
+
+      .section-label {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 0.35rem;
+      }
+
+      .accent-bar {
+        height: 4px;
+        width: 60px;
+        background: var(--accent);
+        border-radius: 999px;
+        margin-bottom: 0.9rem;
+      }
+
+      .helper-text {
+        color: var(--muted);
+        font-size: 0.95rem;
+        margin: 0.2rem 0 1rem 0;
+      }
+
+      .dataTables_wrapper .dataTables_filter input {
+        border-radius: 8px;
+        border: 1px solid var(--panel-border);
+        font-size: 0.8rem;
+        padding: 0.2rem 0.4rem;
+      }
+
+      .dataTables_wrapper .dataTables_length label,
+      .dataTables_wrapper .dataTables_filter label {
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      .dataTables_wrapper .dataTables_length select {
+        font-size: 0.8rem;
+        padding: 0.2rem 0.3rem;
+      }
+
+      .nav-tabs > li > a,
+      .nav-tabs > li > a:focus,
+      .nav-tabs > li > a:hover {
+        color: var(--ink);
+      }
+
+      .nav-tabs > li.active > a,
+      .nav-tabs > li.active > a:focus,
+      .nav-tabs > li.active > a:hover {
+        color: #00887c;
+        font-weight: 600;
+      }
+
+      .nav-tabs {
+        border-bottom: 1px solid var(--panel-border);
+        margin-bottom: 1rem;
+      }
+
+      .nav-tabs > li.active > a,
+      .nav-tabs > li.active > a:focus,
+      .nav-tabs > li.active > a:hover {
+        border: none;
+        border-bottom: 2px solid #00887c;
+        background: transparent;
+      }
+
+      .nav-tabs > li > a {
+        border: none;
+        padding: 8px 12px;
+      }
+
+      .tab-content {
+        padding-top: 0.5rem;
+      }
+
+      table.dataTable thead th {
+        font-size: 0.85rem;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      table.dataTable tbody td {
+        font-size: 0.95rem;
+      }
+
+      .shiny-output-error-validation {
+        color: var(--muted);
+      }
+    "))
+  ),
+  tags$div(
+    class = "title-panel",
+    fluidRow(
+      column(
+        4,
+        tags$h1("Congress, Cash, & Constituents"),
+        tags$div(class = "subtitle", "A newsroom-style look at campaign funding and federal awards by state.")
+      ),
+      column(
+        4,
+        tags$div(
+          class = "map-panel",
+          plotOutput("member_district_map", height = 220)
+        )
+      ),
+      column(
+        4,
+        tags$div(
+          class = "sidebar",
+          selectizeInput("state", "State", choices = NULL, multiple = FALSE),
+          uiOutput("legislator_ui"),
+          numericInput("cycle", "Election cycle", value = 2024, min = 2000, step = 2),
+          actionButton("run", "Analyze")
+        )
+      )
+    )
+  ),
+  tabsetPanel(
+    tabPanel(
+      "Overview",
+      tags$div(
+        class = "main-wide",
+        tags$div(
+          class = "section-card",
+          tags$div(class = "section-label", "Overview"),
+          tags$div(class = "accent-bar"),
+          h2("Snapshot: Campaign Funding and Federal Awards"),
+          tags$div(class = "helper-text", "High-level totals for the selected member and state."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Member Profile"),
+            tableOutput("member_profile_overview"),
+            tableOutput("member_details_overview"),
+            uiOutput("member_details_note")
+          ),
+          fluidRow(
+            column(
+              6,
+              tags$div(
+                class = "sub-card",
+                tags$div(class = "sub-card-title", "Campaign Receipts"),
+                tags$div(class = "stat-label", "Total Receipts"),
+                tags$div(class = "stat-value", textOutput("totals_in_overview"))
+              )
+            ),
+            column(
+              6,
+              tags$div(
+                class = "sub-card",
+                tags$div(class = "sub-card-title", "Federal Awards"),
+                tags$div(class = "stat-label", "Total Outflow"),
+                tags$div(class = "stat-value", textOutput("totals_out_overview"))
+              )
+            )
+          )
+        )
+      )
+    ),
+    tabPanel(
+      "Cash In",
+      tags$div(
+        class = "main-wide",
+      tags$div(
+        class = "section-card",
+        tags$div(class = "section-label", "Cash In"),
+        tags$div(class = "accent-bar"),
+        h2("Cash In — Campaign Money by Member"),
+        tags$div(class = "helper-text", "Trends and context for campaign funding."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Campaign Receipts"),
+            tags$div(class = "stat-label", "Total Receipts"),
+            tags$div(class = "stat-value", textOutput("totals_in_cash_in"))
+          ),
+        tags$div(
+          class = "sub-card",
+          tags$div(class = "sub-card-title", "Receipts Trend"),
+            tabsetPanel(
+              tabPanel("Donor Type", plotOutput("receipts_trend_donor_types_overview", height = 260)),
+              tabPanel("Donor Employers", plotOutput("receipts_trend_employers_overview", height = 260)),
+              tabPanel("Donor Occupations", plotOutput("receipts_trend_occupations_overview", height = 260)),
+              tabPanel("Internal Transfers", plotOutput("receipts_trend_internal_overview", height = 260))
+            )
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Context"),
+            h3("Putting Campaign Cash in Context"),
+            tableOutput("translation_in"),
+            tags$div(
+              class = "custom-benchmark",
+              tags$div(class = "custom-title", "Add a custom benchmark"),
+              fluidRow(
+                column(
+                  6,
+                  textInput("custom_benchmark_label", "Benchmark name", value = "")
+                ),
+                column(
+                  6,
+                  numericInput("custom_benchmark_cost", "Cost per unit ($)", value = NA_real_, min = 0)
+                )
+              )
+            ),
+            uiOutput("translation_in_note")
+          )
+        )
+      )
+    ),
+    tabPanel(
+      "Cash Out",
+      tags$div(
+        class = "main-wide",
+      tags$div(
+        class = "section-card",
+        tags$div(class = "section-label", "Cash Out"),
+        tags$div(class = "accent-bar"),
+        h2("Cash Out — Where Federal Funds Are Awarded"),
+        tags$div(class = "helper-text", "Maps and context for federal awards by recipient location."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Federal Awards"),
+            tags$div(class = "stat-label", "Total Outflow"),
+            tags$div(class = "stat-value", textOutput("totals_out_cash_out"))
+          ),
+        tags$div(
+          class = "sub-card",
+          tags$div(class = "sub-card-title", "Geography"),
+            h3("Federal Awards by Recipient Location"),
+            tabsetPanel(
+              id = "geo_view_overview",
+              tabPanel("District"),
+              tabPanel("County")
+            ),
+            plotOutput("spending_geo_map_overview", height = 320),
+            uiOutput("geo_note_overview")
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Context"),
+            h3("Putting State-Level Spending in Context"),
+            tableOutput("translation_out"),
+            tags$div(
+              class = "custom-benchmark",
+              tags$div(class = "custom-title", "Add a custom benchmark"),
+              fluidRow(
+                column(
+                  6,
+                  textInput("custom_benchmark_out_label", "Benchmark name", value = "")
+                ),
+                column(
+                  6,
+                  numericInput("custom_benchmark_out_cost", "Cost per unit ($)", value = NA_real_, min = 0)
+                )
+              )
+            ),
+            uiOutput("translation_out_note")
+          )
+        )
+      )
+    ),
+    tabPanel(
+      "Dig Deeper",
+      tags$div(
+        class = "main-wide",
+        tags$div(
+          class = "section-card",
+          tags$div(class = "section-label", "Cash In"),
+          tags$div(class = "accent-bar"),
+          h2("Cash In — Campaign Money by Member"),
+          tags$div(class = "helper-text", "Detailed campaign finance tables."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Receipts"),
+            h3("Campaign Receipts"),
+            fluidRow(
+              column(
+                7,
+                DTOutput("donor_mix"),
+                uiOutput("donor_mix_note")
+              ),
+              column(
+                5,
+                tags$div(class = "stat-label", "Total Receipts"),
+                tags$div(class = "stat-value", textOutput("totals_in_dig"))
+              )
+            )
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Breakdowns"),
+            h3("Top 10 Donor Employers"),
+            DTOutput("donor_employers"),
+            uiOutput("donor_employers_note"),
+            h3("Top 10 Donor Occupations"),
+            DTOutput("donor_occupations"),
+            uiOutput("donor_occupations_note")
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Committees"),
+            h3("Top Internal Committee Transfers"),
+            DTOutput("donor_pacs_internal")
+          )
+        ),
+        tags$div(
+          class = "section-card",
+          tags$div(class = "section-label", "Cash Out"),
+          tags$div(class = "accent-bar"),
+          h2("Cash Out — Where Federal Funds Are Awarded"),
+          tags$div(class = "helper-text", "Detailed federal awards tables."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Recipients"),
+            h3("State Recipients"),
+            DTOutput("spending_recipients"),
+            uiOutput("recipients_note")
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Agencies"),
+            h3("Federal Funding by Awarding Agency"),
+            DTOutput("spending_agencies"),
+            uiOutput("agencies_note")
+          ),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Geography"),
+            h3("Federal Awards by Recipient Location"),
+            tabsetPanel(
+              id = "geo_view",
+              tabPanel("District"),
+              tabPanel("County")
+            ),
+            DTOutput("spending_geo_table"),
+            uiOutput("geo_table_note")
+          )
+        )
+      )
     )
   )
 )
@@ -147,6 +583,9 @@ server <- function(input, output, session) {
     cached <- tryCatch(read.csv(cache_path, stringsAsFactors = FALSE), error = function(e) NULL)
     if (!is.null(cached) && nrow(cached) > 0) {
       legislators_ref <- as_tibble(cached)
+      if (!"bioguide_id" %in% names(legislators_ref)) {
+        legislators_ref <- get_legislators_reference()
+      }
     } else {
       legislators_ref <- get_legislators_reference()
     }
@@ -159,6 +598,9 @@ server <- function(input, output, session) {
       legislator_clean = clean_legislator_name(legislator)
     ) |>
     filter(!is.na(legislator_clean), legislator_clean != "")
+  if (!"bioguide_id" %in% names(legislators_ref)) {
+    legislators_ref$bioguide_id <- NA_character_
+  }
   message("Loaded legislators: ", nrow(legislators_ref), " from cache: ", cache_path)
   state_choices <- setNames(state_lookup$state_abbrev, state_lookup$state_name)
   updateSelectizeInput(session, "state", choices = state_choices, selected = state_lookup$state_abbrev[[1]], server = TRUE)
@@ -221,6 +663,8 @@ server <- function(input, output, session) {
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     )
   }
@@ -237,6 +681,7 @@ server <- function(input, output, session) {
     member <- selected_member()
     chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
     member_state <- ifelse(nrow(member) > 0, member$state[[1]], state_selected)
+    bioguide_id <- ifelse(nrow(member) > 0 && "bioguide_id" %in% names(member), member$bioguide_id[[1]], NA_character_)
 
     if (!is.null(legislator) && legislator != "") {
       finance <- get_openfec_summary(
@@ -263,10 +708,13 @@ server <- function(input, output, session) {
     translation_in <- translate_inflow(suppressWarnings(as.numeric(receipts_total)))
     translation_out <- translate_outflow(spending$total_amount)
 
+    congress_profile <- get_congress_member_profile(bioguide_id)
+
     list(
       legislator = ifelse(is.null(legislator) || legislator == "", paste0("State: ", state_name_selected), legislator),
       state_selected = state_selected,
       member = member,
+      congress_profile = congress_profile,
       finance = finance,
       spending = spending,
       translation_in = translation_in,
@@ -305,51 +753,300 @@ server <- function(input, output, session) {
     }
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$totals_in <- renderText({
+  output$member_profile_overview <- renderTable({
+    member <- selected_member()
+    if (nrow(member) > 0) {
+      district_val <- if ("district" %in% names(member)) as.character(member$district) else NA_character_
+      district_val <- ifelse(is.na(district_val) | district_val == "" | district_val == "0" | district_val == "00",
+                             ifelse(tolower(member$chamber[[1]]) == "house", "At-Large", NA_character_),
+                             district_val)
+      member |>
+        transmute(
+          Name = legislator,
+          Party = party,
+          State = state,
+          Chamber = chamber,
+          District = district_val
+        )
+    } else {
+      state_selected <- normalize_state_abbrev(input$state)
+      state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
+      if (length(state_name_selected) == 0) {
+        state_name_selected <- NA_character_
+      }
+      data.frame(
+        Name = "State-level view",
+        Party = NA_character_,
+        State = state_name_selected,
+        Chamber = NA_character_,
+        District = NA_character_
+      )
+    }
+  }, striped = TRUE, bordered = TRUE, width = "100%")
+
+  output$member_details_overview <- renderTable({
+    details <- results()$congress_profile
+    if (is.null(details) || is.null(details$profile) || nrow(details$profile) == 0) {
+      data.frame(
+        Field = "Member details",
+        Value = "Unavailable"
+      )
+    } else {
+      details$profile |>
+        rename(Field = field, Value = value)
+    }
+  }, striped = TRUE, bordered = TRUE, width = "100%")
+
+  output$member_details_note <- renderUI({
+    details <- results()$congress_profile
+    note <- if (!is.null(details) && !is.null(details$note)) details$note else ""
+    if (is.null(note) || note == "") {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", note)
+    }
+  })
+
+  output$member_district_map <- renderPlot({
+    member <- selected_member()
+    if (nrow(member) == 0) {
+      plot.new()
+      text(0.5, 0.5, "Select a member to view district map.", cex = 0.9)
+      return()
+    }
+    if (!requireNamespace("tigris", quietly = TRUE) || !requireNamespace("sf", quietly = TRUE)) {
+      plot.new()
+      text(0.5, 0.5, "Packages 'tigris' and 'sf' required for district map.", cex = 0.9)
+      return()
+    }
+
+    state_abbrev <- member$state[[1]]
+    chamber <- tolower(member$chamber[[1]])
+    district <- if ("district" %in% names(member)) as.character(member$district[[1]]) else NA_character_
+    if (is.na(state_abbrev) || state_abbrev == "") {
+      plot.new()
+      text(0.5, 0.5, "State unavailable for district map.", cex = 0.9)
+      return()
+    }
+    if (chamber == "senate") {
+      plot.new()
+      text(0.5, 0.5, "Senators represent the full state.", cex = 0.9)
+      return()
+    }
+    if (is.na(district) || district == "" || district == "0" || district == "00") {
+      plot.new()
+      text(0.5, 0.5, "At-large district.", cex = 0.9)
+      return()
+    }
+
+    district_num <- suppressWarnings(as.integer(district))
+    if (is.na(district_num)) {
+      plot.new()
+      text(0.5, 0.5, "District unavailable for map.", cex = 0.9)
+      return()
+    }
+
+    year_try <- as.integer(format(Sys.Date(), "%Y"))
+    shape <- tryCatch(
+      tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
+      error = function(e) NULL
+    )
+    if (is.null(shape)) {
+      shape <- tryCatch(
+        tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
+        error = function(e) NULL
+      )
+    }
+    if (is.null(shape)) {
+      plot.new()
+      text(0.5, 0.5, "District map unavailable.", cex = 0.9)
+      return()
+    }
+
+    cd_cols <- names(shape)[grepl("^CD\\d+FP$", names(shape))]
+    cd_col <- if (length(cd_cols) > 0) cd_cols[[1]] else if ("CD" %in% names(shape)) "CD" else NA_character_
+    if (is.na(cd_col)) {
+      plot.new()
+      text(0.5, 0.5, "District map unavailable.", cex = 0.9)
+      return()
+    }
+
+    district_num_value <- district_num
+    shape <- shape |>
+      mutate(district_num = suppressWarnings(as.integer(.data[[cd_col]])))
+    highlight <- shape |>
+      filter(district_num == district_num_value)
+
+    ggplot() +
+      geom_sf(data = shape, fill = "#e7f5f2", color = "white", size = 0.2) +
+      geom_sf(data = highlight, fill = "#00887c", color = "white", size = 0.3) +
+      theme_void(base_size = 11)
+  })
+
+  formatted_receipts_total <- function() {
     x <- results()
+    if (is.null(x)) {
+      return("Click Analyze")
+    }
     legis_sel <- get_single(input$legislator)
     if (is.null(legis_sel) || is.na(legis_sel) || legis_sel == "") {
-      "Select a Member of Congress"
+      return("Select a Member of Congress")
+    }
+    receipts_total <- x$finance$summary |>
+      filter(source == "Total receipts") |>
+      summarize(total = sum(amount_usd, na.rm = TRUE)) |>
+      pull(total)
+    if (length(receipts_total) == 0 || is.na(receipts_total)) {
+      receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
+    }
+    if (is.na(receipts_total) || receipts_total == 0) {
+      "Unavailable"
     } else {
-      receipts_total <- x$finance$summary |>
+      paste0("$", format(round(receipts_total, 2), big.mark = ","))
+    }
+  }
+
+  output$totals_in_overview <- renderText({
+    formatted_receipts_total()
+  })
+
+  output$totals_in_cash_in <- renderText({
+    formatted_receipts_total()
+  })
+
+  output$totals_in_dig <- renderText({
+    formatted_receipts_total()
+  })
+
+
+  formatted_outflow_total <- function() {
+    x <- results()
+    if (is.null(x)) {
+      return("Click Analyze")
+    }
+    total_amount <- x$spending$total_amount
+    if (is.null(total_amount) || is.na(total_amount) || total_amount == 0) {
+      "Unavailable"
+    } else {
+      paste0("$", format(round(total_amount, 2), big.mark = ","))
+    }
+  }
+
+  output$totals_out_overview <- renderText({
+    formatted_outflow_total()
+  })
+
+  output$totals_out_cash_out <- renderText({
+    formatted_outflow_total()
+  })
+
+
+  output$translation_in <- renderTable({
+    base <- results()$translation_in
+
+    custom_label <- trimws(input$custom_benchmark_label)
+    custom_cost <- suppressWarnings(as.numeric(input$custom_benchmark_cost))
+    if (!is.null(custom_label) && nzchar(custom_label) && !is.na(custom_cost) && custom_cost > 0) {
+      receipts_total <- results()$finance$summary |>
         filter(source == "Total receipts") |>
         summarize(total = sum(amount_usd, na.rm = TRUE)) |>
         pull(total)
       if (length(receipts_total) == 0 || is.na(receipts_total)) {
-        receipts_total <- sum(x$finance$summary$amount_usd, na.rm = TRUE)
+        receipts_total <- sum(results()$finance$summary$amount_usd, na.rm = TRUE)
       }
-      if (is.na(receipts_total) || receipts_total == 0) {
-        "Unavailable"
-      } else {
-        paste0("$", format(round(receipts_total, 2), big.mark = ","))
+      if (!is.na(receipts_total) && receipts_total > 0) {
+        units <- floor(receipts_total / custom_cost)
+        interpretation <- paste0(
+          "At $", format(round(custom_cost, 2), big.mark = ","),
+          " each, this equals about ", format(units, big.mark = ","),
+          " units."
+        )
+        base <- bind_rows(
+          base,
+          tibble(
+            benchmark = custom_label,
+            unit_cost_usd = custom_cost,
+            estimated_units = units,
+            interpretation = interpretation,
+            note = "Custom benchmark."
+          )
+        )
       }
     }
-  })
 
-  output$totals_out <- renderTable({
-    x <- results()
-    data.frame(
-      metric = c("Member of Congress", "Total outflow in scope (USD)"),
-      value = c(
-        x$legislator,
-        format(round(x$spending$total_amount, 2), big.mark = ",")
-      )
-    )
-  }, striped = TRUE, bordered = TRUE, width = "100%")
-
-  output$translation_in <- renderTable({
-    results()$translation_in |>
-      select(-note) |>
+    base |>
+      select(-note, -estimated_units) |>
+      mutate(
+        unit_cost_usd = ifelse(
+          is.na(unit_cost_usd),
+          NA_character_,
+          paste0(
+            "$",
+            trimws(formatC(round(as.numeric(unit_cost_usd), 0), format = "f", digits = 0, big.mark = ","))
+          )
+        )
+      ) |>
       rename(
         Benchmark = benchmark,
-        `Cost per Unit ($)` = unit_cost_usd,
-        `How Many Units?` = estimated_units,
+        `Cost per Unit` = unit_cost_usd,
         `What That Means` = interpretation
       )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
+  output$translation_in_note <- renderUI({
+    notes <- results()$translation_in$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
   output$translation_out <- renderTable({
-    results()$translation_out
+    base <- results()$translation_out
+
+    custom_label <- trimws(input$custom_benchmark_out_label)
+    custom_cost <- suppressWarnings(as.numeric(input$custom_benchmark_out_cost))
+    if (!is.null(custom_label) && nzchar(custom_label) && !is.na(custom_cost) && custom_cost > 0) {
+      total_outflow <- results()$spending$total_amount
+      if (!is.na(total_outflow) && total_outflow > 0) {
+        units <- floor(total_outflow / custom_cost)
+        interpretation <- paste0(
+          "At $", format(round(custom_cost, 2), big.mark = ","),
+          " each, this equals about ", format(units, big.mark = ","),
+          " units."
+        )
+        base <- bind_rows(
+          base,
+          tibble(
+            benchmark = custom_label,
+            unit_cost_usd = custom_cost,
+            estimated_units = units,
+            interpretation = interpretation,
+            note = "Custom benchmark."
+          )
+        )
+      }
+    }
+
+    base |>
+      select(-note, -estimated_units) |>
+      mutate(
+        unit_cost_usd = ifelse(
+          is.na(unit_cost_usd),
+          NA_character_,
+          paste0(
+            "$",
+            trimws(formatC(round(as.numeric(unit_cost_usd), 0), format = "f", digits = 0, big.mark = ","))
+          )
+        )
+      ) |>
+      rename(
+        Benchmark = benchmark,
+        `Cost per Unit` = unit_cost_usd,
+        `What That Means` = interpretation
+      )
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
   output$donor_mix <- renderDT({
@@ -381,13 +1078,30 @@ server <- function(input, output, session) {
     }
     tbl <- datatable(
       df,
-      options = list(pageLength = 5, searching = FALSE, lengthChange = FALSE),
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
       rownames = FALSE
     )
     if (!is.null(amount_col)) {
       tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
     }
     tbl
+  })
+
+  output$donor_mix_note <- renderUI({
+    notes <- results()$finance$donor_types$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      fallback_notes <- results()$finance$summary |>
+        filter(source %in% c("Individuals", "PACs")) |>
+        pull(note)
+      fallback_notes <- fallback_notes[!is.na(fallback_notes) & nzchar(fallback_notes)]
+      notes <- fallback_notes
+    }
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
   })
 
   output$donor_employers <- renderDT({
@@ -402,16 +1116,33 @@ server <- function(input, output, session) {
     if ("note" %in% names(df)) {
       df <- df %>% select(-note)
     }
+    if ("industry" %in% names(df)) {
+      names(df)[names(df) == "industry"] <- "Industry"
+    }
     amount_col <- NULL
     if ("amount_usd" %in% names(df)) {
       names(df)[names(df) == "amount_usd"] <- "Amount"
       amount_col <- "Amount"
     }
-    tbl <- datatable(df, options = list(pageLength = 5), rownames = FALSE)
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
     if (!is.null(amount_col)) {
       tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
     }
     tbl
+  })
+
+  output$donor_employers_note <- renderUI({
+    notes <- results()$finance$industries$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
   })
 
   output$donor_occupations <- renderDT({
@@ -426,12 +1157,91 @@ server <- function(input, output, session) {
     if ("note" %in% names(df)) {
       df <- df %>% select(-note)
     }
+    if ("occupation" %in% names(df)) {
+      names(df)[names(df) == "occupation"] <- "Occupation"
+    }
     amount_col <- NULL
     if ("amount_usd" %in% names(df)) {
       names(df)[names(df) == "amount_usd"] <- "Amount"
       amount_col <- "Amount"
     }
-    tbl <- datatable(df, options = list(pageLength = 5), rownames = FALSE)
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
+    if (!is.null(amount_col)) {
+      tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
+    }
+    tbl
+  })
+
+  output$donor_occupations_note <- renderUI({
+    notes <- results()$finance$occupations$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$donor_pacs_all <- renderDT({
+    df <- results()$finance$pacs_all
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        pac = "No data",
+        amount_usd = NA_real_,
+        note = "Schedule A PAC breakdown returned no rows."
+      )
+    }
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    amount_col <- NULL
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+      amount_col <- "Amount"
+    }
+    if ("pac" %in% names(df)) {
+      names(df)[names(df) == "pac"] <- "PAC"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
+    if (!is.null(amount_col)) {
+      tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
+    }
+    tbl
+  })
+
+  output$donor_pacs_internal <- renderDT({
+    df <- results()$finance$pacs_internal
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        pac = "No data",
+        amount_usd = NA_real_,
+        note = "No internal committee transfers found."
+      )
+    }
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    amount_col <- NULL
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+      amount_col <- "Amount"
+    }
+    if ("pac" %in% names(df)) {
+      names(df)[names(df) == "pac"] <- "Committee"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
     if (!is.null(amount_col)) {
       tbl <- tbl %>% formatCurrency(amount_col, currency = "$", digits = 0)
     }
@@ -447,7 +1257,24 @@ server <- function(input, output, session) {
         note = "USAspending returned no rows."
       )
     }
-    datatable(df, options = list(pageLength = 5))
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    if ("agency" %in% names(df)) {
+      names(df)[names(df) == "agency"] <- "Agency"
+    }
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
+    if ("Amount" %in% names(df)) {
+      tbl <- tbl %>% formatCurrency("Amount", currency = "$", digits = 0)
+    }
+    tbl
   })
 
   output$spending_recipients <- renderDT({
@@ -459,17 +1286,476 @@ server <- function(input, output, session) {
         note = "USAspending returned no rows."
       )
     }
-    datatable(df, options = list(pageLength = 5))
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    if ("recipient" %in% names(df)) {
+      names(df)[names(df) == "recipient"] <- "Recipient"
+    }
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
+    if ("Amount" %in% names(df)) {
+      tbl <- tbl %>% formatCurrency("Amount", currency = "$", digits = 0)
+    }
+    tbl
   })
 
-  output$receipts_trend <- renderPlot({
-    x <- results()$finance$trend
-    shiny::validate(shiny::need(nrow(x) > 0, "No campaign finance records available."))
+  output$spending_geo_table <- renderDT({
+    view <- input$geo_view
+    if (is.null(view) || view == "") {
+      view <- "County"
+    }
+    df <- if (identical(view, "District")) results()$spending$districts else results()$spending$counties
+    label_col <- if (identical(view, "District")) "district" else "county"
+    label_name <- if (identical(view, "District")) "District" else "County"
 
-    ggplot(x, aes(x = factor(period, levels = unique(period)), y = amount_usd)) +
-      geom_col(fill = "#0b7285") +
-      labs(x = NULL, y = "Amount (USD)") +
-      theme_minimal(base_size = 12)
+    if (nrow(df) == 0) {
+      df <- data.frame(
+        label = "No data",
+        amount_usd = NA_real_,
+        note = "USAspending returned no rows."
+      )
+    } else {
+      df <- df |> rename(label = all_of(label_col))
+    }
+
+    if ("note" %in% names(df)) {
+      df <- df %>% select(-note)
+    }
+    if ("label" %in% names(df)) {
+      names(df)[names(df) == "label"] <- label_name
+    }
+    if ("amount_usd" %in% names(df)) {
+      names(df)[names(df) == "amount_usd"] <- "Amount"
+    }
+    tbl <- datatable(
+      df,
+      options = list(pageLength = 10, paging = FALSE, searching = FALSE, lengthChange = FALSE, info = FALSE),
+      rownames = FALSE
+    )
+    if ("Amount" %in% names(df)) {
+      tbl <- tbl %>% formatCurrency("Amount", currency = "$", digits = 0)
+    }
+    tbl
+  })
+
+  output$spending_geo_map <- renderPlot({
+    view <- input$geo_view
+    if (is.null(view) || view == "") {
+      view <- "County"
+    }
+
+    if (identical(view, "District")) {
+      df <- results()$spending$districts
+      if (nrow(df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No district data available.", cex = 0.9)
+        return()
+      }
+      if (!requireNamespace("tigris", quietly = TRUE) || !requireNamespace("sf", quietly = TRUE)) {
+        plot.new()
+        text(0.5, 0.5, "Packages 'tigris' and 'sf' required for district map.", cex = 0.9)
+        return()
+      }
+
+      df_use <- df
+      if ("note" %in% names(df_use)) {
+        df_use <- df_use %>% select(-note)
+      }
+      df_use <- df_use |>
+        mutate(
+          district_num = suppressWarnings(as.integer(gsub("^.*-0*", "", district)))
+        ) |>
+        filter(!is.na(district_num))
+
+      state_abbrev <- results()$state_selected
+      if (is.null(state_abbrev) || is.na(state_abbrev) || state_abbrev == "") {
+        plot.new()
+        text(0.5, 0.5, "State not available for district map.", cex = 0.9)
+        return()
+      }
+
+      year_try <- as.integer(format(Sys.Date(), "%Y"))
+      shape <- tryCatch(
+        tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
+        error = function(e) NULL
+      )
+      if (is.null(shape)) {
+        shape <- tryCatch(
+          tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
+          error = function(e) NULL
+        )
+      }
+      if (is.null(shape)) {
+        plot.new()
+        text(0.5, 0.5, "District map unavailable for state.", cex = 0.9)
+        return()
+      }
+
+      cd_cols <- names(shape)[grepl("^CD\\d+FP$", names(shape))]
+      cd_col <- if (length(cd_cols) > 0) cd_cols[[1]] else if ("CD" %in% names(shape)) "CD" else NA_character_
+      if (is.na(cd_col)) {
+        plot.new()
+        text(0.5, 0.5, "District map unavailable.", cex = 0.9)
+        return()
+      }
+
+      shape <- shape |>
+        mutate(district_num = suppressWarnings(as.integer(.data[[cd_col]]))) |>
+        left_join(df_use, by = "district_num")
+
+      ggplot(shape) +
+        geom_sf(aes(fill = amount_usd), color = "white", size = 0.15) +
+        scale_fill_gradient(
+          low = "#e7f5f2",
+          high = "#00887c",
+          labels = scales::label_dollar(accuracy = 1),
+          na.value = "#f0f0f0"
+        ) +
+        labs(fill = "Amount") +
+        theme_void(base_size = 11) +
+        theme(legend.position = "right")
+    } else {
+      df <- results()$spending$counties
+      if (nrow(df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No county data available.", cex = 0.9)
+        return()
+      }
+      if (!requireNamespace("maps", quietly = TRUE)) {
+        plot.new()
+        text(0.5, 0.5, "Package 'maps' required for county map.", cex = 0.9)
+        return()
+      }
+
+      df_use <- df
+      if ("note" %in% names(df_use)) {
+        df_use <- df_use %>% select(-note)
+      }
+      df_use <- df_use |>
+        mutate(
+          county_raw = tolower(county),
+          county_raw = gsub("\\s+county.*$", "", county_raw),
+          county_name = trimws(county_raw)
+        )
+
+      state_abbrev <- results()$state_selected
+      state_name <- state_lookup$state_name[state_lookup$state_abbrev == state_abbrev]
+      if (length(state_name) == 0 || is.na(state_name[[1]])) {
+        plot.new()
+        text(0.5, 0.5, "State not available for county map.", cex = 0.9)
+        return()
+      }
+      state_name <- tolower(state_name[[1]])
+
+      map_df <- ggplot2::map_data("county") |>
+        filter(region == state_name)
+      if (nrow(map_df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "County map unavailable for state.", cex = 0.9)
+        return()
+      }
+
+      map_df <- map_df |>
+        left_join(df_use, by = c("subregion" = "county_name"))
+
+      ggplot(map_df, aes(long, lat, group = group, fill = amount_usd)) +
+        geom_polygon(color = "white", size = 0.15) +
+        coord_fixed(1.3) +
+        scale_fill_gradient(
+          low = "#e7f5f2",
+          high = "#00887c",
+          labels = scales::label_dollar(accuracy = 1),
+          na.value = "#f0f0f0"
+        ) +
+        labs(fill = "Amount") +
+        theme_void(base_size = 11) +
+        theme(legend.position = "right")
+    }
+  })
+
+  output$spending_geo_map_overview <- renderPlot({
+    view <- input$geo_view_overview
+    if (is.null(view) || view == "") {
+      view <- "District"
+    }
+
+    if (identical(view, "District")) {
+      df <- results()$spending$districts
+      if (nrow(df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No district data available.", cex = 0.9)
+        return()
+      }
+      if (!requireNamespace("tigris", quietly = TRUE) || !requireNamespace("sf", quietly = TRUE)) {
+        plot.new()
+        text(0.5, 0.5, "Packages 'tigris' and 'sf' required for district map.", cex = 0.9)
+        return()
+      }
+
+      df_use <- df
+      if ("note" %in% names(df_use)) {
+        df_use <- df_use %>% select(-note)
+      }
+      df_use <- df_use |>
+        mutate(
+          district_num = suppressWarnings(as.integer(gsub("^.*-0*", "", district)))
+        ) |>
+        filter(!is.na(district_num))
+
+      state_abbrev <- results()$state_selected
+      if (is.null(state_abbrev) || is.na(state_abbrev) || state_abbrev == "") {
+        plot.new()
+        text(0.5, 0.5, "State not available for district map.", cex = 0.9)
+        return()
+      }
+
+      year_try <- as.integer(format(Sys.Date(), "%Y"))
+      shape <- tryCatch(
+        tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
+        error = function(e) NULL
+      )
+      if (is.null(shape)) {
+        shape <- tryCatch(
+          tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
+          error = function(e) NULL
+        )
+      }
+      if (is.null(shape)) {
+        plot.new()
+        text(0.5, 0.5, "District map unavailable for state.", cex = 0.9)
+        return()
+      }
+
+      cd_cols <- names(shape)[grepl("^CD\\d+FP$", names(shape))]
+      cd_col <- if (length(cd_cols) > 0) cd_cols[[1]] else if ("CD" %in% names(shape)) "CD" else NA_character_
+      if (is.na(cd_col)) {
+        plot.new()
+        text(0.5, 0.5, "District map unavailable.", cex = 0.9)
+        return()
+      }
+
+      shape <- shape |>
+        mutate(district_num = suppressWarnings(as.integer(.data[[cd_col]]))) |>
+        left_join(df_use, by = "district_num")
+
+      ggplot(shape) +
+        geom_sf(aes(fill = amount_usd), color = "white", size = 0.15) +
+        scale_fill_gradient(
+          low = "#e7f5f2",
+          high = "#00887c",
+          labels = scales::label_dollar(accuracy = 1),
+          na.value = "#f0f0f0"
+        ) +
+        labs(fill = "Amount") +
+        theme_void(base_size = 11) +
+        theme(legend.position = "right")
+    } else {
+      df <- results()$spending$counties
+      if (nrow(df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "No county data available.", cex = 0.9)
+        return()
+      }
+      if (!requireNamespace("maps", quietly = TRUE)) {
+        plot.new()
+        text(0.5, 0.5, "Package 'maps' required for county map.", cex = 0.9)
+        return()
+      }
+
+      df_use <- df
+      if ("note" %in% names(df_use)) {
+        df_use <- df_use %>% select(-note)
+      }
+      df_use <- df_use |>
+        mutate(
+          county_raw = tolower(county),
+          county_raw = gsub("\\s+county.*$", "", county_raw),
+          county_name = trimws(county_raw)
+        )
+
+      state_abbrev <- results()$state_selected
+      state_name <- state_lookup$state_name[state_lookup$state_abbrev == state_abbrev]
+      if (length(state_name) == 0 || is.na(state_name[[1]])) {
+        plot.new()
+        text(0.5, 0.5, "State not available for county map.", cex = 0.9)
+        return()
+      }
+      state_name <- tolower(state_name[[1]])
+
+      map_df <- ggplot2::map_data("county") |>
+        filter(region == state_name)
+      if (nrow(map_df) == 0) {
+        plot.new()
+        text(0.5, 0.5, "County map unavailable for state.", cex = 0.9)
+        return()
+      }
+
+      map_df <- map_df |>
+        left_join(df_use, by = c("subregion" = "county_name"))
+
+      ggplot(map_df, aes(long, lat, group = group, fill = amount_usd)) +
+        geom_polygon(color = "white", size = 0.15) +
+        coord_fixed(1.3) +
+        scale_fill_gradient(
+          low = "#e7f5f2",
+          high = "#00887c",
+          labels = scales::label_dollar(accuracy = 1),
+          na.value = "#f0f0f0"
+        ) +
+        labs(fill = "Amount") +
+        theme_void(base_size = 11) +
+        theme(legend.position = "right")
+    }
+  })
+
+  output$recipients_note <- renderUI({
+    notes <- results()$spending$recipients$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$agencies_note <- renderUI({
+    notes <- results()$spending$agencies$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$geo_table_note <- renderUI({
+    view <- input$geo_view
+    notes <- if (identical(view, "District")) {
+      results()$spending$districts$note
+    } else {
+      results()$spending$counties$note
+    }
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$geo_note <- renderUI({
+    view <- input$geo_view
+    notes <- if (identical(view, "District")) {
+      results()$spending$districts$note
+    } else {
+      results()$spending$counties$note
+    }
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$geo_note_overview <- renderUI({
+    view <- input$geo_view_overview
+    notes <- if (identical(view, "District")) {
+      results()$spending$districts$note
+    } else {
+      results()$spending$counties$note
+    }
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  output$translation_out_note <- renderUI({
+    notes <- results()$translation_out$note
+    notes <- notes[!is.na(notes) & nzchar(notes)]
+    if (length(notes) == 0) {
+      NULL
+    } else {
+      tags$div(style = "color:#666;font-size:0.85em;", notes[[1]])
+    }
+  })
+
+  make_barh_plot <- function(df, label_col, amount_col = "amount_usd", title = NULL, color = "#00887c") {
+    if (is.null(df) || nrow(df) == 0 || !(label_col %in% names(df)) || !(amount_col %in% names(df))) {
+      plot.new()
+      text(0.5, 0.5, "No data available.", cex = 0.9)
+      return(invisible(NULL))
+    }
+    df <- df |>
+      filter(!is.na(.data[[label_col]]), .data[[label_col]] != "", !is.na(.data[[amount_col]])) |>
+      arrange(.data[[amount_col]]) |>
+      mutate(label = factor(.data[[label_col]], levels = .data[[label_col]]))
+
+    ggplot(df, aes(x = label, y = .data[[amount_col]])) +
+      geom_col(fill = color, width = 0.6) +
+      coord_flip() +
+      scale_y_continuous(labels = scales::label_dollar(accuracy = 1)) +
+      labs(x = NULL, y = NULL, title = title) +
+      theme_minimal(base_size = 12) +
+      theme(
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_line(color = "#e5e7eb", linewidth = 0.3)
+      )
+  }
+
+  output$receipts_trend_donor_types <- renderPlot({
+    df <- results()$finance$donor_types
+    if (nrow(df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No campaign finance records available.", cex = 0.9)
+      return()
+    }
+    make_barh_plot(df, "donor_type")
+  })
+
+  output$receipts_trend_donor_types_overview <- renderPlot({
+    df <- results()$finance$donor_types
+    if (nrow(df) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No campaign finance records available.", cex = 0.9)
+      return()
+    }
+    make_barh_plot(df, "donor_type")
+  })
+
+  output$receipts_trend_employers <- renderPlot({
+    make_barh_plot(results()$finance$industries, "industry")
+  })
+
+  output$receipts_trend_employers_overview <- renderPlot({
+    make_barh_plot(results()$finance$industries, "industry")
+  })
+
+  output$receipts_trend_occupations <- renderPlot({
+    make_barh_plot(results()$finance$occupations, "occupation")
+  })
+
+  output$receipts_trend_occupations_overview <- renderPlot({
+    make_barh_plot(results()$finance$occupations, "occupation")
+  })
+
+  output$receipts_trend_internal <- renderPlot({
+    make_barh_plot(results()$finance$pacs_internal, "pac")
+  })
+
+  output$receipts_trend_internal_overview <- renderPlot({
+    make_barh_plot(results()$finance$pacs_internal, "pac")
   })
 
   output$member_debug <- renderText({

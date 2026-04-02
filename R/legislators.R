@@ -37,7 +37,8 @@ get_legislators_reference <- function() {
       party = as.character(x$party),
       state = as.character(x$state),
       chamber = ifelse(as.character(x$role_type) == "senator", "Senate", "House"),
-      district = district_val
+      district = district_val,
+      bioguide_id = if (!is.null(x$person$bioguideid)) as.character(x$person$bioguideid) else NA_character_
     )
   })
 

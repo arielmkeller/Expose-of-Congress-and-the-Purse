@@ -354,6 +354,149 @@ openfec_schedule_a_by_occupation <- function(committee_ids, cycle, api_key) {
     rename(occupation = label)
 }
 
+openfec_schedule_a_rows <- function(committee_ids, cycle, api_key, max_pages = 3, per_page = 100) {
+  if (length(committee_ids) == 0 || is.null(cycle) || is.na(cycle)) {
+    return(list(rows = NULL, error = NULL))
+  }
+  rows <- list()
+  last_error <- NULL
+  for (committee_id in committee_ids) {
+    page <- 1
+    repeat {
+      req <- request("https://api.open.fec.gov/v1/schedules/schedule_a/") |>
+        req_error(is_error = function(resp) FALSE) |>
+        req_url_query(
+          api_key = api_key,
+          committee_id = committee_id,
+          cycle = cycle,
+          per_page = per_page,
+          page = page,
+          sort = "-contribution_receipt_amount"
+        )
+      resp <- tryCatch(req_perform(req), error = function(e) e)
+      if (inherits(resp, "error")) {
+        last_error <- resp$message
+        break
+      }
+      if (resp_status(resp) >= 400) {
+        body_text <- tryCatch(resp_body_string(resp), error = function(e) "")
+        if (nchar(body_text) > 160) {
+          body_text <- paste0(substr(body_text, 1, 160), "…")
+        }
+        last_error <- paste0("HTTP ", resp_status(resp), ifelse(nchar(body_text) > 0, paste0(": ", body_text), ""))
+        break
+      }
+      payload <- tryCatch(resp_body_json(resp, simplifyVector = TRUE), error = function(e) NULL)
+      if (is.null(payload$results) || length(payload$results) == 0) {
+        break
+      }
+      rows <- append(rows, list(as_tibble(payload$results)))
+      total_pages <- payload$pagination$pages
+      if (is.null(total_pages) || page >= total_pages || page >= max_pages) {
+        break
+      }
+      page <- page + 1
+    }
+  }
+  if (length(rows) == 0) {
+    return(list(rows = NULL, error = last_error))
+  }
+  list(rows = bind_rows(rows), error = last_error)
+}
+
+openfec_schedule_a_committee_contributors <- function(committee_ids, cycle, api_key, internal_only = FALSE, max_pages = 3, per_page = 100) {
+  empty_result <- function(note) {
+    tibble(pac = character(), amount_usd = numeric(), note = note)
+  }
+
+  if (length(committee_ids) == 0) {
+    return(empty_result("No committee IDs available for committee breakdown."))
+  }
+  if (is.null(cycle) || is.na(cycle)) {
+    return(empty_result("No cycle available for committee breakdown."))
+  }
+
+  fetched <- openfec_schedule_a_rows(committee_ids, cycle, api_key, max_pages = max_pages, per_page = per_page)
+  if (is.null(fetched$rows)) {
+    note <- ifelse(is.null(fetched$error), "No Schedule A rows returned for committee breakdown.", fetched$error)
+    return(empty_result(note))
+  }
+
+  res <- fetched$rows
+  amount_col <- if ("contribution_receipt_amount" %in% names(res)) {
+    "contribution_receipt_amount"
+  } else if ("total" %in% names(res)) {
+    "total"
+  } else {
+    NA_character_
+  }
+  if (is.na(amount_col)) {
+    return(empty_result("Schedule A rows missing contribution amounts."))
+  }
+
+  name_col <- intersect(c("contributor_name", "contributor", "name"), names(res))
+  name_col <- if (length(name_col) > 0) name_col[[1]] else NA_character_
+  id_col <- intersect(c("contributor_committee_id", "committee_id", "contributor_id"), names(res))
+  id_col <- if (length(id_col) > 0) id_col[[1]] else NA_character_
+
+  df <- res |>
+    transmute(
+      pac_id = if (!is.na(id_col)) as.character(.data[[id_col]]) else NA_character_,
+      pac_name = if (!is.na(name_col)) as.character(.data[[name_col]]) else NA_character_,
+      amount_usd = as.numeric(.data[[amount_col]])
+    )
+
+  df <- df |>
+    mutate(
+      pac_id = ifelse(is.na(pac_id) | pac_id == "", NA_character_, pac_id),
+      pac_name = ifelse(is.na(pac_name) | pac_name == "", NA_character_, pac_name),
+      is_committee = !is.na(pac_id),
+      pac_key = ifelse(!is.na(pac_id), pac_id, pac_name),
+      pac_label = ifelse(!is.na(pac_name), pac_name, pac_id),
+      is_internal = pac_id %in% committee_ids
+    ) |>
+    filter(is_committee, !is.na(pac_key), !is.na(pac_label))
+
+  if (internal_only) {
+    df <- df |> filter(is_internal)
+  } else {
+    df <- df |> filter(!is_internal)
+  }
+
+  if (nrow(df) == 0) {
+    return(empty_result("No committee contributors found in Schedule A rows."))
+  }
+
+  df |>
+    group_by(pac_key, pac_label) |>
+    summarize(amount_usd = sum(amount_usd, na.rm = TRUE), .groups = "drop") |>
+    arrange(desc(amount_usd)) |>
+    head(10) |>
+    transmute(pac = pac_label, amount_usd = amount_usd, note = "")
+}
+
+openfec_schedule_a_top_committees <- function(committee_ids, cycle, api_key, max_pages = 3, per_page = 100) {
+  openfec_schedule_a_committee_contributors(
+    committee_ids,
+    cycle,
+    api_key,
+    internal_only = FALSE,
+    max_pages = max_pages,
+    per_page = per_page
+  )
+}
+
+openfec_schedule_a_internal_transfers <- function(committee_ids, cycle, api_key, max_pages = 3, per_page = 100) {
+  openfec_schedule_a_committee_contributors(
+    committee_ids,
+    cycle,
+    api_key,
+    internal_only = TRUE,
+    max_pages = max_pages,
+    per_page = per_page
+  )
+}
+
 openfec_receipts_trend <- function(candidate_id, cycle, api_key) {
   if (is.null(cycle) || is.na(cycle)) {
     return(tibble(period = character(), amount_usd = numeric(), note = character()))
@@ -529,6 +672,16 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
         amount_usd = c(180000, 160000, 90000),
         note = "Sample data."
       ),
+      pacs_all = tibble(
+        pac = c("Citizens for Example PAC", "Committee for Good Govt"),
+        amount_usd = c(150000, 120000),
+        note = "Sample data."
+      ),
+      pacs_internal = tibble(
+        pac = c("Example Authorized Committee"),
+        amount_usd = c(400000),
+        note = "Sample data."
+      ),
       trend = tibble(
         period = c("Past", "Recent", "Now"),
         amount_usd = c(300000, 500000, 700000),
@@ -555,6 +708,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -578,6 +733,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -611,6 +768,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -726,6 +885,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -788,6 +949,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -828,6 +991,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
+      pacs_internal = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -1061,6 +1226,7 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -1082,6 +1248,7 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       donor_types = tibble(donor_type = character(), amount_usd = numeric(), note = ""),
       industries = tibble(industry = character(), amount_usd = numeric(), note = ""),
       occupations = tibble(occupation = character(), amount_usd = numeric(), note = ""),
+      pacs_all = tibble(pac = character(), amount_usd = numeric(), note = ""),
       trend = tibble(period = character(), amount_usd = numeric(), note = "")
     ))
   }
@@ -1156,6 +1323,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       occupations <- by_occupation |>
         transmute(occupation = occupation, amount_usd = amount_usd, note = note)
     }
+    pacs_all <- openfec_schedule_a_top_committees(principal_committees, cycle_used, api_key)
+    pacs_internal <- openfec_schedule_a_internal_transfers(principal_committees, cycle_used, api_key)
   } else {
     industries <- tibble(
       industry = "No principal committee found for candidate.",
@@ -1166,6 +1335,32 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
       occupation = "No principal committee found for candidate.",
       amount_usd = NA_real_,
       note = ""
+    )
+    pacs_all <- tibble(
+      pac = character(),
+      amount_usd = numeric(),
+      note = "No principal committee found for candidate."
+    )
+    pacs_internal <- tibble(
+      pac = character(),
+      amount_usd = numeric(),
+      note = "No principal committee found for candidate."
+    )
+  }
+
+  if (nrow(pacs_all) > 0 && "amount_usd" %in% names(pacs_all)) {
+    identifiable_total <- sum(pacs_all$amount_usd, na.rm = TRUE)
+  } else {
+    identifiable_total <- 0
+  }
+  if (!is.na(receipts_pacs) && receipts_pacs > identifiable_total) {
+    pacs_all <- bind_rows(
+      pacs_all,
+      tibble(
+        pac = "Other (unitemized/unknown)",
+        amount_usd = receipts_pacs - identifiable_total,
+        note = ""
+      )
     )
   }
 
@@ -1189,6 +1384,8 @@ get_openfec_summary <- function(legislator, cycle = 2024, chamber = NA_character
     donor_types = donor_types,
     industries = industries,
     occupations = occupations,
+    pacs_all = pacs_all,
+    pacs_internal = pacs_internal,
     trend = trend
   )
 }
