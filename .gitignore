@@ -8,3 +8,5 @@ data/raw/
 # OpenFEC cache
 /data/openfec_cache.rds
 .DS_Store
+527/
+Expend22/
