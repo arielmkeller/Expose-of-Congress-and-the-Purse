@@ -43,6 +43,8 @@ source("R/usaspending.R")
 source("R/translation.R")
 source("R/legislators.R")
 source("R/congress_api.R")
+source("R/earmarks.R")
+source("R/rankings.R")
 
 state_lookup <- tibble(
   state_name = c(state.name, "District of Columbia", "Puerto Rico", "U.S. Virgin Islands", "Guam", "American Samoa", "Northern Mariana Islands"),
@@ -76,6 +78,25 @@ clean_legislator_name <- function(x) {
     return(one(x))
   }
   vapply(x, one, character(1))
+}
+
+get_member_photo_url <- function(bioguide_id) {
+  if (is.null(bioguide_id) || is.na(bioguide_id) || bioguide_id == "") {
+    return(NA_character_)
+  }
+  bioguide_id <- as.character(bioguide_id)
+  paste0("https://bioguide.congress.gov/bioguide/photo/", substr(bioguide_id, 1, 1), "/", bioguide_id, ".jpg")
+}
+
+safe_scalar <- function(x, fallback = "Unavailable") {
+  if (length(x) == 0) {
+    return(fallback)
+  }
+  val <- as.character(x[[1]])
+  if (is.na(val) || val == "") {
+    return(fallback)
+  }
+  val
 }
 
 ui <- fluidPage(
@@ -149,9 +170,98 @@ ui <- fluidPage(
 
       .map-panel {
         display: flex;
+        flex-direction: column;
         justify-content: center;
         align-items: center;
+        gap: 0.35rem;
         padding: 0.8rem 0 0.4rem 0;
+      }
+
+      .map-note {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .member-snapshot {
+        display: flex;
+        align-items: flex-start;
+        justify-content: flex-start;
+        gap: 0.9rem;
+        padding: 0.85rem 0.9rem;
+        border: 1px solid var(--panel-border);
+        border-radius: 10px;
+        background: #fbfdff;
+      }
+
+      .member-snapshot-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .member-name {
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+      }
+
+      .member-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 0.45rem;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .member-pill {
+        background: transparent;
+        color: var(--ink);
+        border-radius: 4px;
+        border: 1px solid #d7dee6;
+        padding: 0.38rem 0.7rem;
+        font-size: 0.92rem;
+        font-weight: 700;
+        width: fit-content;
+      }
+
+      .member-photo {
+        width: 72px;
+        height: 92px;
+        border-radius: 6px;
+        overflow: hidden;
+        border: 1px solid var(--panel-border);
+        background: #f1f5f9;
+        flex: 0 0 auto;
+      }
+
+      .member-photo img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .member-snapshot-stats {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-left: auto;
+        min-width: 180px;
+      }
+
+      .member-stat-card {
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 0.5rem 0.65rem;
+        background: #ffffff;
+      }
+
+      .member-stat-title {
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.2rem;
       }
 
       .main-wide {
@@ -315,7 +425,8 @@ ui <- fluidPage(
         4,
         tags$div(
           class = "map-panel",
-          plotOutput("member_district_map", height = 220)
+          plotOutput("member_district_map", height = 220),
+          uiOutput("member_district_note")
         )
       ),
       column(
@@ -344,29 +455,53 @@ ui <- fluidPage(
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Member Profile"),
-            tableOutput("member_profile_overview"),
+            uiOutput("member_profile_overview_ui"),
             tableOutput("member_details_overview"),
             uiOutput("member_details_note")
           ),
-          fluidRow(
-            column(
-              6,
-              tags$div(
-                class = "sub-card",
-                tags$div(class = "sub-card-title", "Campaign Receipts"),
-                tags$div(class = "stat-label", "Total Receipts"),
-                tags$div(class = "stat-value", textOutput("totals_in_overview"))
-              )
+          NULL
+        )
+      )
+    ),
+    tabPanel(
+      "Earmarks",
+      tags$div(
+        class = "main-wide",
+        tags$div(
+          class = "section-card",
+          tags$div(class = "section-label", "Earmarks"),
+          tags$div(class = "accent-bar"),
+          h2("Earmark Requests"),
+          tags$div(class = "helper-text", "Projects and amounts requested by the selected member."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "stat-label", "Total Earmark Spending"),
+            tags$div(class = "stat-value", textOutput("earmarks_total")),
+            tableOutput("earmarks_table")
+          )
+        )
+      )
+    ),
+    tabPanel(
+      "Rankings",
+      tags$div(
+        class = "main-wide",
+        tags$div(
+          class = "section-card",
+          tags$div(class = "section-label", "Rankings"),
+          tags$div(class = "accent-bar"),
+          h2("Member + State Rankings"),
+          tags$div(class = "helper-text", "Compare the selected member and state across earmarks, campaign funding, and federal spending."),
+          tags$div(
+            class = "sub-card",
+            tags$div(class = "sub-card-title", "Ranking Snapshot"),
+            tags$div(
+              style = "display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;",
+              actionButton("build_campaign_ranks", "Compute Campaign Funding Ranks"),
+              actionButton("build_state_spending_ranks", "Compute State Spending Rank")
             ),
-            column(
-              6,
-              tags$div(
-                class = "sub-card",
-                tags$div(class = "sub-card-title", "Federal Awards"),
-                tags$div(class = "stat-label", "Total Outflow"),
-                tags$div(class = "stat-value", textOutput("totals_out_overview"))
-              )
-            )
+            tableOutput("rankings_table"),
+            uiOutput("rankings_note")
           )
         )
       )
@@ -753,36 +888,113 @@ server <- function(input, output, session) {
     }
   }, striped = TRUE, bordered = TRUE, width = "100%")
 
-  output$member_profile_overview <- renderTable({
+  campaign_rank_totals <- reactiveVal(NULL)
+  state_spending_totals_cache <- reactiveVal(NULL)
+
+  observeEvent(input$build_campaign_ranks, {
+    api_key <- Sys.getenv("OPENFEC_API_KEY", unset = "")
+    if (identical(api_key, "")) {
+      showNotification("Set OPENFEC_API_KEY to compute campaign funding ranks.", type = "error")
+      return()
+    }
+    withProgress(message = "Building campaign funding ranks...", value = 0, {
+      incProgress(0.1, detail = "Fetching OpenFEC totals for all legislators")
+      totals <- compute_campaign_receipts_totals(legislators_ref, cycle = input$cycle)
+      campaign_rank_totals(totals)
+      incProgress(0.9)
+    })
+  })
+
+  observeEvent(input$build_state_spending_ranks, {
+    withProgress(message = "Building state spending ranks...", value = 0, {
+      incProgress(0.1, detail = "Fetching USAspending totals for 50 states")
+      totals <- get_state_spending_totals()
+      state_spending_totals_cache(totals)
+      incProgress(0.9)
+    })
+  })
+
+  output$member_profile_overview_ui <- renderUI({
     member <- selected_member()
     if (nrow(member) > 0) {
       district_val <- if ("district" %in% names(member)) as.character(member$district) else NA_character_
       district_val <- ifelse(is.na(district_val) | district_val == "" | district_val == "0" | district_val == "00",
                              ifelse(tolower(member$chamber[[1]]) == "house", "At-Large", NA_character_),
                              district_val)
-      member |>
-        transmute(
-          Name = legislator,
-          Party = party,
-          State = state,
-          Chamber = chamber,
-          District = district_val
+      photo_url <- get_member_photo_url(member$bioguide_id[[1]])
+      name_label <- safe_scalar(member$legislator, fallback = "Member")
+      party_label <- safe_scalar(member$party, fallback = "Unknown")
+      state_label <- safe_scalar(member$state, fallback = "Unknown")
+      chamber_label <- safe_scalar(member$chamber, fallback = "Unknown")
+      district_label <- if (!is.na(district_val) && district_val != "") as.character(district_val) else ""
+      tags$div(
+        class = "member-snapshot",
+        tags$div(
+          class = "member-photo",
+          if (!is.na(photo_url)) tags$img(src = photo_url, alt = paste(name_label, "photo"))
+        ),
+        tags$div(
+          class = "member-snapshot-main",
+          tags$div(class = "member-name", name_label),
+          tags$div(
+            class = "member-meta",
+            tags$span(class = "member-pill", paste0("Party: ", party_label)),
+            tags$span(class = "member-pill", paste0("State: ", state_label)),
+            tags$span(class = "member-pill", paste0("Chamber: ", chamber_label)),
+            if (district_label != "") {
+              tags$span(class = "member-pill", paste0("District: ", district_label))
+            }
+          )
+        ),
+        tags$div(
+          class = "member-snapshot-stats",
+          tags$div(
+            class = "member-stat-card",
+            tags$div(class = "member-stat-title", "Campaign Receipts"),
+            tags$div(class = "stat-label", "Total Receipts"),
+            tags$div(class = "stat-value", textOutput("totals_in_overview"))
+          ),
+          tags$div(
+            class = "member-stat-card",
+            tags$div(class = "member-stat-title", "Federal Awards"),
+            tags$div(class = "stat-label", "Total Outflow"),
+            tags$div(class = "stat-value", textOutput("totals_out_overview"))
+          )
         )
+      )
     } else {
       state_selected <- normalize_state_abbrev(input$state)
       state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
-      if (length(state_name_selected) == 0) {
-        state_name_selected <- NA_character_
-      }
-      data.frame(
-        Name = "State-level view",
-        Party = NA_character_,
-        State = state_name_selected,
-        Chamber = NA_character_,
-        District = NA_character_
+      state_name_selected <- safe_scalar(state_name_selected, fallback = "Unavailable")
+      tags$div(
+        class = "member-snapshot",
+        tags$div(class = "member-photo"),
+        tags$div(
+          class = "member-snapshot-main",
+          tags$div(class = "member-name", "State-level view"),
+          tags$div(
+            class = "member-meta",
+            tags$span(class = "member-pill", paste0("State: ", state_name_selected))
+          )
+        ),
+        tags$div(
+          class = "member-snapshot-stats",
+          tags$div(
+            class = "member-stat-card",
+            tags$div(class = "member-stat-title", "Campaign Receipts"),
+            tags$div(class = "stat-label", "Total Receipts"),
+            tags$div(class = "stat-value", textOutput("totals_in_overview"))
+          ),
+          tags$div(
+            class = "member-stat-card",
+            tags$div(class = "member-stat-title", "Federal Awards"),
+            tags$div(class = "stat-label", "Total Outflow"),
+            tags$div(class = "stat-value", textOutput("totals_out_overview"))
+          )
+        )
       )
     }
-  }, striped = TRUE, bordered = TRUE, width = "100%")
+  })
 
   output$member_details_overview <- renderTable({
     details <- results()$congress_profile
@@ -807,6 +1019,152 @@ server <- function(input, output, session) {
     }
   })
 
+  output$earmarks_table <- renderTable({
+    member <- selected_member()
+    if (nrow(member) == 0) {
+      return(data.frame(Message = "Select a member to view earmark requests."))
+    }
+
+    earmarks <- get_earmarks_for_legislator(member$legislator[[1]], member$chamber[[1]])
+    if (nrow(earmarks) == 0) {
+      return(data.frame(Message = "No earmark requests found for this member in the dataset."))
+    }
+
+    earmarks |>
+      mutate(
+        `Total Amount` = ifelse(
+          is.na(.data$Total_Amount),
+          "Unavailable",
+          paste0("$", formatC(.data$Total_Amount, format = "f", digits = 0, big.mark = ","))
+        )
+      ) |>
+      transmute(
+        Chamber = .data$Chamber,
+        `Requesting Members` = .data$Requesting_Members,
+        Project = .data$Project,
+        Recipient = .data$Recipient,
+        Location = .data$Location,
+        Agency = .data$Agency,
+        Account = .data$Account,
+        Bill = .data$Bill,
+        `Total Amount` = .data$`Total Amount`
+      )
+  }, striped = TRUE, bordered = TRUE, width = "100%")
+
+  output$earmarks_total <- renderText({
+    member <- selected_member()
+    if (nrow(member) == 0) {
+      return("Unavailable")
+    }
+    earmarks <- get_earmarks_for_legislator(member$legislator[[1]], member$chamber[[1]])
+    if (nrow(earmarks) == 0) {
+      return("Unavailable")
+    }
+    total <- sum(earmarks$Total_Amount, na.rm = TRUE)
+    if (is.na(total) || total == 0) {
+      return("Unavailable")
+    }
+    paste0("$", formatC(total, format = "f", digits = 0, big.mark = ","))
+  })
+
+  output$rankings_table <- renderTable({
+    tryCatch({
+      member <- selected_member()
+      if (nrow(member) == 0) {
+        return(data.frame(Message = "Select a member to view rankings."))
+      }
+
+      earmark_ranks <- get_earmark_ranks_for_member(member, legislators_ref)
+      earmark_value <- format_money(earmark_ranks$total)
+
+      campaign_totals <- campaign_rank_totals()
+      if (is.null(campaign_totals)) {
+        campaign_totals <- load_campaign_receipts_cache()$data
+      }
+      campaign_ranks <- get_campaign_ranks_for_member(member, legislators_ref, cycle = input$cycle, totals = campaign_totals)
+      res <- tryCatch(results(), error = function(e) NULL)
+      campaign_value <- if (is.null(res)) "Unavailable" else format_money(extract_total_receipts(res$finance))
+
+      state_abbrev <- member$state[[1]]
+      state_spending_totals <- state_spending_totals_cache()
+      if (is.null(state_spending_totals)) {
+        cached <- load_rank_cache("state_spending_totals_cache.rds", state_spending_cache_key)
+        if (!is.null(cached) && !is.null(cached$data)) {
+          state_spending_totals <- cached$data
+        }
+      }
+      state_spending_rank <- list(total = NA_real_, rank = NA_integer_, total_states = NA_integer_)
+      if (!is.null(state_spending_totals)) {
+        totals <- state_spending_totals |>
+          filter(!is.na(total_spending))
+        total_val <- totals$total_spending[totals$state == state_abbrev]
+        total_val <- if (length(total_val) == 0) NA_real_ else total_val[[1]]
+        rank_val <- if (!is.na(total_val) && nrow(totals) > 0) {
+          rank(-totals$total_spending, ties.method = "min")[totals$state == state_abbrev][[1]]
+        } else {
+          NA_integer_
+        }
+        state_spending_rank <- list(
+          total = total_val,
+          rank = rank_val,
+          total_states = nrow(totals)
+        )
+      }
+
+      data.frame(
+        Metric = c("Campaign funding (cycle)", "Earmark spending", "Federal spending to state"),
+        Value = c(
+          campaign_value,
+          earmark_value,
+          format_money(state_spending_rank$total)
+        ),
+        `Rank in State` = c(
+          format_rank(campaign_ranks$state_rank, campaign_ranks$state_total),
+          format_rank(earmark_ranks$state_rank, earmark_ranks$state_total),
+          "N/A"
+        ),
+        `Rank National` = c(
+          format_rank(campaign_ranks$national_rank, campaign_ranks$national_total),
+          format_rank(earmark_ranks$national_rank, earmark_ranks$national_total),
+          format_rank(state_spending_rank$rank, state_spending_rank$total_states)
+        ),
+        check.names = FALSE
+      )
+    }, error = function(e) {
+      data.frame(Message = paste("Ranking data unavailable:", e$message))
+    })
+  }, striped = TRUE, bordered = TRUE, width = "100%")
+
+  output$rankings_note <- renderUI({
+    notes <- c()
+    api_key <- Sys.getenv("OPENFEC_API_KEY", unset = "")
+    if (identical(api_key, "")) {
+      notes <- c(notes, "Campaign funding ranks require OPENFEC_API_KEY.")
+    }
+    campaign_totals <- campaign_rank_totals()
+    if (is.null(campaign_totals)) {
+      campaign_totals <- load_campaign_receipts_cache()$data
+    }
+    if (!is.null(campaign_totals) && nrow(campaign_totals) > 0) {
+      available <- sum(!is.na(campaign_totals$total_receipts))
+      if (available > 0 && available < 50) {
+        notes <- c(notes, paste0("Campaign funding ranks are incomplete (", available, " members with totals)."))
+      }
+    }
+    cached_state_spending <- load_rank_cache("state_spending_totals_cache.rds", state_spending_cache_key)
+    if (is.null(state_spending_totals_cache()) && is.null(cached_state_spending)) {
+      notes <- c(notes, "Click “Compute State Spending Rank” to rank the state against all 50 states.")
+    }
+    cached_campaign <- load_campaign_receipts_cache()$data
+    if (is.null(campaign_rank_totals()) && (is.null(cached_campaign) || nrow(cached_campaign) == 0)) {
+      notes <- c(notes, "Click “Compute Campaign Funding Ranks” for state + national comparisons.")
+    }
+    if (length(notes) == 0) {
+      return(NULL)
+    }
+    tags$div(style = "color:#666;font-size:0.85em;", paste(notes, collapse = " "))
+  })
+
   output$member_district_map <- renderPlot({
     member <- selected_member()
     if (nrow(member) == 0) {
@@ -828,15 +1186,28 @@ server <- function(input, output, session) {
       text(0.5, 0.5, "State unavailable for district map.", cex = 0.9)
       return()
     }
-    if (chamber == "senate") {
-      plot.new()
-      text(0.5, 0.5, "Senators represent the full state.", cex = 0.9)
-      return()
-    }
-    if (is.na(district) || district == "" || district == "0" || district == "00") {
-      plot.new()
-      text(0.5, 0.5, "At-large district.", cex = 0.9)
-      return()
+    if (chamber == "senate" || is.na(district) || district == "" || district == "0" || district == "00") {
+      state_shape <- tryCatch(
+        tigris::states(cb = TRUE, class = "sf"),
+        error = function(e) NULL
+      )
+      if (is.null(state_shape)) {
+        plot.new()
+        text(0.5, 0.5, "State map unavailable.", cex = 0.9)
+        return()
+      }
+      state_shape <- state_shape |>
+        filter(.data$STUSPS == state_abbrev)
+      if (nrow(state_shape) == 0) {
+        plot.new()
+        text(0.5, 0.5, "State map unavailable.", cex = 0.9)
+        return()
+      }
+      return(
+        ggplot() +
+          geom_sf(data = state_shape, fill = "#E7EEF7", color = "#2B4C7E", linewidth = 0.6) +
+          theme_void()
+      )
     }
 
     district_num <- suppressWarnings(as.integer(district))
@@ -881,6 +1252,26 @@ server <- function(input, output, session) {
       geom_sf(data = shape, fill = "#e7f5f2", color = "white", size = 0.2) +
       geom_sf(data = highlight, fill = "#00887c", color = "white", size = 0.3) +
       theme_void(base_size = 11)
+  })
+
+  output$member_district_note <- renderUI({
+    member <- selected_member()
+    if (nrow(member) == 0) {
+      return(NULL)
+    }
+    chamber <- tolower(member$chamber[[1]])
+    district <- if ("district" %in% names(member)) as.character(member$district[[1]]) else NA_character_
+    is_at_large <- is.na(district) || district == "" || district == "0" || district == "00"
+    note <- NULL
+    if (chamber == "senate") {
+      note <- "Senators represent the whole state."
+    } else if (is_at_large) {
+      note <- "At-large district."
+    }
+    if (is.null(note)) {
+      return(NULL)
+    }
+    tags$div(class = "map-note", note)
   })
 
   formatted_receipts_total <- function() {

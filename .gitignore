@@ -1,6 +1,10 @@
 .Rproj.user
 .Rhistory
 .RData
+data/campaign_receipts_cache.rds
+data/earmark_totals_cache.rds
+.Rhistory
+.RData
 .Ruserdata
 .env
 data/raw/
