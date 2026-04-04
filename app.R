@@ -161,6 +161,45 @@ ui <- fluidPage(
         margin-top: 0.2rem;
       }
 
+      .title-panel .overview-text {
+        color: var(--ink);
+        font-size: 1.2rem;
+        line-height: 1.5;
+        margin-top: 0.5rem;
+        max-width: 520px;
+      }
+
+      .tab-description {
+        color: var(--ink);
+        font-size: 1.15rem;
+        line-height: 1.5;
+        margin: 0.2rem 0 1rem 0;
+        max-width: 720px;
+      }
+
+      .plot-caption {
+        color: var(--ink);
+        font-size: 0.95rem;
+        line-height: 1.4;
+        margin-top: 0.35rem;
+      }
+
+      .context-heading,
+      .context-subtext {
+        color: var(--ink);
+        font-size: 1.22rem;
+        line-height: 1.55;
+      }
+
+      .context-heading {
+        margin: 0.2rem 0 0.2rem 0;
+        font-weight: 600;
+      }
+
+      .context-subtext {
+        margin: 0 0 0.8rem 0;
+      }
+
       .sidebar {
         background: var(--panel);
         border: 1px solid var(--panel-border);
@@ -419,7 +458,10 @@ ui <- fluidPage(
       column(
         4,
         tags$h1("Congress, Cash, & Constituents"),
-        tags$div(class = "subtitle", "A newsroom-style look at campaign funding and federal awards by state.")
+        tags$div(
+          class = "overview-text",
+          "This app is for policymakers and curious citizens alike to explore how money moves through Congress: campaign cash in, federal dollars out, and how it ties back to a member’s district and state. Use the tabs to explore funding totals, trends, rankings, and where awards land geographically."
+        )
       ),
       column(
         4,
@@ -451,7 +493,7 @@ ui <- fluidPage(
           tags$div(class = "section-label", "Overview"),
           tags$div(class = "accent-bar"),
           h2("Snapshot: Campaign Funding and Federal Awards"),
-          tags$div(class = "helper-text", "High-level totals for the selected member and state."),
+          tags$div(class = "tab-description", "Shows the key totals for the selected member and state, so you can see campaign cash in and federal dollars out at a glance."),
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Member Profile"),
@@ -472,7 +514,7 @@ ui <- fluidPage(
           tags$div(class = "section-label", "Earmarks"),
           tags$div(class = "accent-bar"),
           h2("Earmark Requests"),
-          tags$div(class = "helper-text", "Projects and amounts requested by the selected member."),
+          tags$div(class = "tab-description", "Lists the member’s earmark requests, including project names and requested amounts."),
           tags$div(
             class = "sub-card",
             tags$div(class = "stat-label", "Total Earmark Spending"),
@@ -491,13 +533,14 @@ ui <- fluidPage(
           tags$div(class = "section-label", "Rankings"),
           tags$div(class = "accent-bar"),
           h2("Member + State Rankings"),
-          tags$div(class = "helper-text", "Compare the selected member and state across earmarks, campaign funding, and federal spending."),
+          tags$div(class = "tab-description", "Compares the selected member and state against others on fundraising and federal spending totals."),
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Ranking Snapshot"),
             tags$div(
               style = "display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.6rem;",
-              actionButton("build_campaign_ranks", "Compute Campaign Funding Ranks"),
+              actionButton("build_campaign_ranks", "Compute Campaign Funding Ranks (State)"),
+              actionButton("build_campaign_ranks_national", "Compute Campaign Funding Ranks (National, long run)"),
               actionButton("build_state_spending_ranks", "Compute State Spending Rank")
             ),
             tableOutput("rankings_table"),
@@ -515,27 +558,35 @@ ui <- fluidPage(
         tags$div(class = "section-label", "Cash In"),
         tags$div(class = "accent-bar"),
         h2("Cash In — Campaign Money by Member"),
-        tags$div(class = "helper-text", "Trends and context for campaign funding."),
-          tags$div(
-            class = "sub-card",
-            tags$div(class = "sub-card-title", "Campaign Receipts"),
+        tags$div(class = "tab-description", "Breaks down campaign fundraising by source, donor type, and internal transfers, with trends and context."),
+        tags$div(
+          class = "sub-card",
+          tags$div(class = "sub-card-title", "Campaign Receipts"),
             tags$div(class = "stat-label", "Total Receipts"),
             tags$div(class = "stat-value", textOutput("totals_in_cash_in"))
           ),
         tags$div(
           class = "sub-card",
-          tags$div(class = "sub-card-title", "Receipts Trend"),
+            tags$div(class = "sub-card-title", "Receipts Trend"),
             tabsetPanel(
-              tabPanel("Donor Type", plotOutput("receipts_trend_donor_types_overview", height = 260)),
+              tabPanel(
+                "New PAC + Individual Receipts (Cycle)",
+                plotOutput("receipts_trend_donor_types_overview", height = 260),
+                tags$div(
+                  class = "plot-caption",
+                  "Shows new receipts by donor type for the selected cycle. Internal PAC/committee transfers are shown separately."
+                )
+              ),
               tabPanel("Donor Employers", plotOutput("receipts_trend_employers_overview", height = 260)),
               tabPanel("Donor Occupations", plotOutput("receipts_trend_occupations_overview", height = 260)),
-              tabPanel("Internal Transfers", plotOutput("receipts_trend_internal_overview", height = 260))
+              tabPanel("Internal PAC/Committee Transfers", plotOutput("receipts_trend_internal_overview", height = 260))
             )
           ),
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Context"),
-            h3("Putting Campaign Cash in Context"),
+            tags$div(class = "context-heading", "Putting Campaign Cash in Context"),
+            tags$div(class = "context-subtext", "Translate campaign totals into everyday costs."),
             tableOutput("translation_in"),
             tags$div(
               class = "custom-benchmark",
@@ -565,10 +616,10 @@ ui <- fluidPage(
         tags$div(class = "section-label", "Cash Out"),
         tags$div(class = "accent-bar"),
         h2("Cash Out — Where Federal Funds Are Awarded"),
-        tags$div(class = "helper-text", "Maps and context for federal awards by recipient location."),
-          tags$div(
-            class = "sub-card",
-            tags$div(class = "sub-card-title", "Federal Awards"),
+        tags$div(class = "tab-description", "Maps and summarizes where federal awards go, by district and county, with totals and context."),
+        tags$div(
+          class = "sub-card",
+          tags$div(class = "sub-card-title", "Federal Awards"),
             tags$div(class = "stat-label", "Total Outflow"),
             tags$div(class = "stat-value", textOutput("totals_out_cash_out"))
           ),
@@ -587,7 +638,8 @@ ui <- fluidPage(
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Context"),
-            h3("Putting State-Level Spending in Context"),
+            tags$div(class = "context-heading", "Putting State-Level Spending in Context"),
+            tags$div(class = "context-subtext", "Translate federal award totals into everyday costs."),
             tableOutput("translation_out"),
             tags$div(
               class = "custom-benchmark",
@@ -617,7 +669,7 @@ ui <- fluidPage(
           tags$div(class = "section-label", "Cash In"),
           tags$div(class = "accent-bar"),
           h2("Cash In — Campaign Money by Member"),
-          tags$div(class = "helper-text", "Detailed campaign finance tables."),
+          tags$div(class = "tab-description", "Provides detailed tables behind the charts, including donors, committees, agencies, and recipients."),
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Receipts"),
@@ -657,7 +709,7 @@ ui <- fluidPage(
           tags$div(class = "section-label", "Cash Out"),
           tags$div(class = "accent-bar"),
           h2("Cash Out — Where Federal Funds Are Awarded"),
-          tags$div(class = "helper-text", "Detailed federal awards tables."),
+          tags$div(class = "tab-description", "Provides detailed tables behind the charts, including donors, committees, agencies, and recipients."),
           tags$div(
             class = "sub-card",
             tags$div(class = "sub-card-title", "Recipients"),
@@ -804,57 +856,107 @@ server <- function(input, output, session) {
     )
   }
 
-  results <- eventReactive(input$run, {
-    state_selected <- normalize_state_abbrev(input$state)
-    state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
-    if (length(state_name_selected) == 0) {
-      state_name_selected <- NA_character_
+  district_shape_cache <- new.env(parent = emptyenv())
+  county_map_cache <- new.env(parent = emptyenv())
+  county_map_all <- NULL
+
+  get_district_shape_cached <- function(state_abbrev) {
+    if (is.null(state_abbrev) || is.na(state_abbrev) || state_abbrev == "") {
+      return(NULL)
     }
-    shiny::validate(shiny::need(!is.na(state_selected) && nchar(state_selected) > 0, "Select a state."))
-
-    legislator <- trimws(get_single(input$legislator))
-    member <- selected_member()
-    chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
-    member_state <- ifelse(nrow(member) > 0, member$state[[1]], state_selected)
-    bioguide_id <- ifelse(nrow(member) > 0 && "bioguide_id" %in% names(member), member$bioguide_id[[1]], NA_character_)
-
-    if (!is.null(legislator) && legislator != "") {
-      finance <- get_openfec_summary(
-        legislator,
-        cycle = input$cycle,
-        chamber = ifelse(nrow(member) > 0, chamber, NA_character_),
-        state = member_state,
-        district = ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
-      )
-    } else {
-      finance <- build_openfec_placeholder(member_state, "Select a legislator for OpenFEC campaign finance data.")
+    year_try <- as.integer(format(Sys.Date(), "%Y"))
+    key <- paste(state_abbrev, year_try, sep = ":")
+    if (exists(key, envir = district_shape_cache, inherits = FALSE)) {
+      return(get(key, envir = district_shape_cache))
     }
-
-    district_value <- ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
-    spending <- get_usaspending_context(state = member_state, district = district_value)
-    receipts_total <- finance$summary |>
-      filter(source == "Total receipts") |>
-      summarize(total = sum(amount_usd, na.rm = TRUE)) |>
-      pull(total)
-    if (length(receipts_total) == 0 || is.na(receipts_total)) {
-      receipts_total <- sum(finance$summary$amount_usd, na.rm = TRUE)
-    }
-
-    translation_in <- translate_inflow(suppressWarnings(as.numeric(receipts_total)))
-    translation_out <- translate_outflow(spending$total_amount)
-
-    congress_profile <- get_congress_member_profile(bioguide_id)
-
-    list(
-      legislator = ifelse(is.null(legislator) || legislator == "", paste0("State: ", state_name_selected), legislator),
-      state_selected = state_selected,
-      member = member,
-      congress_profile = congress_profile,
-      finance = finance,
-      spending = spending,
-      translation_in = translation_in,
-      translation_out = translation_out
+    shape <- tryCatch(
+      tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
+      error = function(e) NULL
     )
+    if (is.null(shape)) {
+      shape <- tryCatch(
+        tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
+        error = function(e) NULL
+      )
+    }
+    assign(key, shape, envir = district_shape_cache)
+    shape
+  }
+
+  get_county_map_cached <- function(state_name) {
+    if (is.null(state_name) || is.na(state_name) || state_name == "") {
+      return(NULL)
+    }
+    state_key <- tolower(state_name)
+    if (exists(state_key, envir = county_map_cache, inherits = FALSE)) {
+      return(get(state_key, envir = county_map_cache))
+    }
+    if (is.null(county_map_all)) {
+      county_map_all <<- ggplot2::map_data("county")
+    }
+    map_df <- county_map_all[county_map_all$region == state_key, , drop = FALSE]
+    assign(state_key, map_df, envir = county_map_cache)
+    map_df
+  }
+
+  results <- eventReactive(input$run, {
+    withProgress(message = "Analyzing…", value = 0, {
+      state_selected <- normalize_state_abbrev(input$state)
+      state_name_selected <- state_lookup$state_name[state_lookup$state_abbrev == state_selected]
+      if (length(state_name_selected) == 0) {
+        state_name_selected <- NA_character_
+      }
+      shiny::validate(shiny::need(!is.na(state_selected) && nchar(state_selected) > 0, "Select a state."))
+
+      legislator <- trimws(get_single(input$legislator))
+      member <- selected_member()
+      chamber <- ifelse(nrow(member) > 0, member$chamber[[1]], NA_character_)
+      member_state <- ifelse(nrow(member) > 0, member$state[[1]], state_selected)
+      bioguide_id <- ifelse(nrow(member) > 0 && "bioguide_id" %in% names(member), member$bioguide_id[[1]], NA_character_)
+
+      incProgress(0.2, detail = "Loading campaign finance")
+      if (!is.null(legislator) && legislator != "") {
+        finance <- get_openfec_summary(
+          legislator,
+          cycle = input$cycle,
+          chamber = ifelse(nrow(member) > 0, chamber, NA_character_),
+          state = member_state,
+          district = ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
+        )
+      } else {
+        finance <- build_openfec_placeholder(member_state, "Select a legislator for OpenFEC campaign finance data.")
+      }
+
+      incProgress(0.5, detail = "Loading federal awards")
+      district_value <- ifelse(nrow(member) > 0 && "district" %in% names(member), member$district[[1]], NA_character_)
+      spending <- get_usaspending_context(state = member_state, district = district_value)
+      receipts_total <- finance$summary |>
+        filter(source == "Total receipts") |>
+        summarize(total = sum(amount_usd, na.rm = TRUE)) |>
+        pull(total)
+      if (length(receipts_total) == 0 || is.na(receipts_total)) {
+        receipts_total <- sum(finance$summary$amount_usd, na.rm = TRUE)
+      }
+
+      incProgress(0.7, detail = "Building context")
+      translation_in <- translate_inflow(suppressWarnings(as.numeric(receipts_total)))
+      translation_out <- translate_outflow(spending$total_amount)
+
+      incProgress(0.85, detail = "Loading member profile")
+      congress_profile <- get_congress_member_profile(bioguide_id)
+
+      incProgress(1)
+      list(
+        legislator = ifelse(is.null(legislator) || legislator == "", paste0("State: ", state_name_selected), legislator),
+        state_selected = state_selected,
+        member = member,
+        congress_profile = congress_profile,
+        finance = finance,
+        spending = spending,
+        translation_in = translation_in,
+        translation_out = translation_out
+      )
+    })
   })
 
   output$member_profile <- renderTable({
@@ -897,11 +999,33 @@ server <- function(input, output, session) {
       showNotification("Set OPENFEC_API_KEY to compute campaign funding ranks.", type = "error")
       return()
     }
+    member <- selected_member()
+    member_state <- if (nrow(member) > 0) member$state[[1]] else normalize_state_abbrev(input$state)
+    member_name <- if (nrow(member) > 0) member$legislator[[1]] else NA_character_
     withProgress(message = "Building campaign funding ranks...", value = 0, {
-      incProgress(0.1, detail = "Fetching OpenFEC totals for all legislators")
-      totals <- compute_campaign_receipts_totals(legislators_ref, cycle = input$cycle)
+      incProgress(0.1, detail = "Fetching OpenFEC totals for selected state")
+      totals <- compute_campaign_receipts_totals(
+        legislators_ref,
+        cycle = input$cycle,
+        limit_states = member_state,
+        priority_names = member_name
+      )
       campaign_rank_totals(totals)
       incProgress(0.9)
+    })
+  })
+
+  observeEvent(input$build_campaign_ranks_national, {
+    api_key <- Sys.getenv("OPENFEC_API_KEY", unset = "")
+    if (identical(api_key, "")) {
+      showNotification("Set OPENFEC_API_KEY to compute campaign funding ranks.", type = "error")
+      return()
+    }
+    withProgress(message = "Building national campaign funding ranks (this can take a few minutes)...", value = 0, {
+      incProgress(0.05, detail = "Fetching OpenFEC totals for all legislators")
+      totals <- compute_campaign_receipts_totals(legislators_ref, cycle = input$cycle)
+      campaign_rank_totals(totals)
+      incProgress(0.95)
     })
   })
 
@@ -1742,8 +1866,9 @@ server <- function(input, output, session) {
       view <- "County"
     }
 
+    res <- results()
     if (identical(view, "District")) {
-      df <- results()$spending$districts
+      df <- res$spending$districts
       if (nrow(df) == 0) {
         plot.new()
         text(0.5, 0.5, "No district data available.", cex = 0.9)
@@ -1765,24 +1890,14 @@ server <- function(input, output, session) {
         ) |>
         filter(!is.na(district_num))
 
-      state_abbrev <- results()$state_selected
+      state_abbrev <- res$state_selected
       if (is.null(state_abbrev) || is.na(state_abbrev) || state_abbrev == "") {
         plot.new()
         text(0.5, 0.5, "State not available for district map.", cex = 0.9)
         return()
       }
 
-      year_try <- as.integer(format(Sys.Date(), "%Y"))
-      shape <- tryCatch(
-        tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
-        error = function(e) NULL
-      )
-      if (is.null(shape)) {
-        shape <- tryCatch(
-          tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
-          error = function(e) NULL
-        )
-      }
+      shape <- get_district_shape_cached(state_abbrev)
       if (is.null(shape)) {
         plot.new()
         text(0.5, 0.5, "District map unavailable for state.", cex = 0.9)
@@ -1813,7 +1928,7 @@ server <- function(input, output, session) {
         theme_void(base_size = 11) +
         theme(legend.position = "right")
     } else {
-      df <- results()$spending$counties
+      df <- res$spending$counties
       if (nrow(df) == 0) {
         plot.new()
         text(0.5, 0.5, "No county data available.", cex = 0.9)
@@ -1836,7 +1951,7 @@ server <- function(input, output, session) {
           county_name = trimws(county_raw)
         )
 
-      state_abbrev <- results()$state_selected
+      state_abbrev <- res$state_selected
       state_name <- state_lookup$state_name[state_lookup$state_abbrev == state_abbrev]
       if (length(state_name) == 0 || is.na(state_name[[1]])) {
         plot.new()
@@ -1845,8 +1960,7 @@ server <- function(input, output, session) {
       }
       state_name <- tolower(state_name[[1]])
 
-      map_df <- ggplot2::map_data("county") |>
-        filter(region == state_name)
+      map_df <- get_county_map_cached(state_name)
       if (nrow(map_df) == 0) {
         plot.new()
         text(0.5, 0.5, "County map unavailable for state.", cex = 0.9)
@@ -1877,8 +1991,9 @@ server <- function(input, output, session) {
       view <- "District"
     }
 
+    res <- results()
     if (identical(view, "District")) {
-      df <- results()$spending$districts
+      df <- res$spending$districts
       if (nrow(df) == 0) {
         plot.new()
         text(0.5, 0.5, "No district data available.", cex = 0.9)
@@ -1900,24 +2015,14 @@ server <- function(input, output, session) {
         ) |>
         filter(!is.na(district_num))
 
-      state_abbrev <- results()$state_selected
+      state_abbrev <- res$state_selected
       if (is.null(state_abbrev) || is.na(state_abbrev) || state_abbrev == "") {
         plot.new()
         text(0.5, 0.5, "State not available for district map.", cex = 0.9)
         return()
       }
 
-      year_try <- as.integer(format(Sys.Date(), "%Y"))
-      shape <- tryCatch(
-        tigris::congressional_districts(state = state_abbrev, year = year_try, cb = TRUE, class = "sf"),
-        error = function(e) NULL
-      )
-      if (is.null(shape)) {
-        shape <- tryCatch(
-          tigris::congressional_districts(state = state_abbrev, cb = TRUE, class = "sf"),
-          error = function(e) NULL
-        )
-      }
+      shape <- get_district_shape_cached(state_abbrev)
       if (is.null(shape)) {
         plot.new()
         text(0.5, 0.5, "District map unavailable for state.", cex = 0.9)
@@ -1948,7 +2053,7 @@ server <- function(input, output, session) {
         theme_void(base_size = 11) +
         theme(legend.position = "right")
     } else {
-      df <- results()$spending$counties
+      df <- res$spending$counties
       if (nrow(df) == 0) {
         plot.new()
         text(0.5, 0.5, "No county data available.", cex = 0.9)
@@ -1971,7 +2076,7 @@ server <- function(input, output, session) {
           county_name = trimws(county_raw)
         )
 
-      state_abbrev <- results()$state_selected
+      state_abbrev <- res$state_selected
       state_name <- state_lookup$state_name[state_lookup$state_abbrev == state_abbrev]
       if (length(state_name) == 0 || is.na(state_name[[1]])) {
         plot.new()
@@ -1980,8 +2085,7 @@ server <- function(input, output, session) {
       }
       state_name <- tolower(state_name[[1]])
 
-      map_df <- ggplot2::map_data("county") |>
-        filter(region == state_name)
+      map_df <- get_county_map_cached(state_name)
       if (nrow(map_df) == 0) {
         plot.new()
         text(0.5, 0.5, "County map unavailable for state.", cex = 0.9)

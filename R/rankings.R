@@ -1,6 +1,35 @@
 library(dplyr)
 library(tibble)
 
+clean_legislator_name_simple <- function(x) {
+  one <- function(val) {
+    y <- as.character(val)
+    y <- tryCatch(iconv(y, to = "ASCII//TRANSLIT"), error = function(e) y)
+    y <- sub("\\s*\\[.*\\]\\s*$", "", y)
+    y <- gsub("\\([^\\)]*\\)", "", y)
+    y <- gsub("\\b(rep\\.?|representative|sen\\.?|senator|delegate|del\\.?|hon\\.?|mr\\.?|mrs\\.?|ms\\.?|commish\\.?|commissioner)\\b", "", y, ignore.case = TRUE)
+    y <- gsub("[^A-Za-z\\s'-]", " ", y)
+    y <- gsub("\\s+", " ", y)
+    y <- trimws(y)
+    y <- sub("\\s+[A-Z]{1,2}-[A-Z]{2}\\d*$", "", y)
+    if (identical(y, "")) {
+      return(y)
+    }
+    tokens <- unlist(strsplit(y, " "))
+    tokens <- tokens[tokens != ""]
+    suffixes <- c("jr", "sr", "ii", "iii", "iv", "v")
+    tokens <- tokens[!tolower(tokens) %in% suffixes]
+    if (length(tokens) == 1) {
+      return(tokens[[1]])
+    }
+    paste(tokens[[1]], tokens[[length(tokens)]])
+  }
+  if (length(x) == 1) {
+    return(one(x))
+  }
+  vapply(x, one, character(1))
+}
+
 rank_cache_env <- new.env(parent = emptyenv())
 
 rank_cache_path <- function(filename) {
@@ -160,23 +189,45 @@ extract_total_receipts <- function(finance) {
   as.numeric(total)
 }
 
-compute_campaign_receipts_totals <- function(legislators_ref, cycle = 2024) {
+compute_campaign_receipts_totals <- function(legislators_ref, cycle = 2024, limit_states = NULL, priority_names = character()) {
   cached <- load_campaign_receipts_cache()
   existing <- cached$data
   if (is.null(existing) || nrow(existing) == 0) {
     existing <- tibble()
   }
 
-  rows <- lapply(seq_len(nrow(legislators_ref)), function(i) {
-    row <- legislators_ref[i, ]
-    key <- paste(row$legislator, cycle, row$chamber, row$state, row$district, sep = "|")
+  target <- legislators_ref
+  if (!is.null(limit_states) && length(limit_states) > 0) {
+    limit_states <- toupper(limit_states)
+    target <- target |> filter(state %in% limit_states)
+  }
+  if (length(priority_names) > 0) {
+    priority_names <- unique(priority_names[nzchar(priority_names)])
+    if (length(priority_names) > 0) {
+      extra <- legislators_ref |>
+        filter(legislator %in% priority_names | legislator_clean %in% priority_names)
+      target <- bind_rows(target, extra) |> distinct(legislator, state, chamber, district, .keep_all = TRUE)
+    }
+  }
+
+  rows <- lapply(seq_len(nrow(target)), function(i) {
+    row <- target[i, ]
+    query_name <- row$legislator
+    if ("legislator_clean" %in% names(legislators_ref)) {
+      clean_val <- row$legislator_clean
+      if (!is.null(clean_val) && !is.na(clean_val) && nzchar(as.character(clean_val))) {
+        query_name <- clean_val
+      }
+    }
+    key <- paste(query_name, row$legislator, cycle, row$chamber, row$state, row$district, sep = "|")
     if (nrow(existing) > 0 && key %in% existing$key) {
       return(existing[existing$key == key, ] |> slice(1))
     }
-    finance <- get_openfec_summary(row$legislator, cycle = cycle, chamber = row$chamber, state = row$state, district = row$district)
+    finance <- get_openfec_summary(query_name, cycle = cycle, chamber = row$chamber, state = row$state, district = row$district)
     tibble(
       key = key,
       legislator = row$legislator,
+      legislator_clean = clean_legislator_name_simple(row$legislator),
       state = row$state,
       chamber = row$chamber,
       cycle = cycle,
@@ -197,8 +248,16 @@ get_campaign_ranks_for_member <- function(member, legislators_ref, cycle = 2024,
     return(list(total = NA_real_, state_rank = NA_integer_, state_total = NA_integer_, national_rank = NA_integer_, national_total = NA_integer_))
   }
   name <- member$legislator[[1]]
+  name_clean <- clean_legislator_name_simple(name)
   member_state <- member$state[[1]]
+  if (!"legislator_clean" %in% names(totals)) {
+    totals <- totals |>
+      mutate(legislator_clean = clean_legislator_name_simple(legislator))
+  }
   total_val <- totals$total_receipts[totals$legislator == name]
+  if (length(total_val) == 0) {
+    total_val <- totals$total_receipts[totals$legislator_clean == name_clean]
+  }
   total_val <- if (length(total_val) == 0) NA_real_ else total_val[[1]]
 
   state_totals <- totals |>
@@ -209,10 +268,22 @@ get_campaign_ranks_for_member <- function(member, legislators_ref, cycle = 2024,
   state_rank <- NA_integer_
   national_rank <- NA_integer_
   if (!is.na(total_val) && nrow(state_totals) >= min_state) {
-    state_rank <- rank(-state_totals$total_receipts, ties.method = "min")[state_totals$legislator == name][[1]]
+    idx_state <- which(state_totals$legislator == name)
+    if (length(idx_state) == 0) {
+      idx_state <- which(state_totals$legislator_clean == name_clean)
+    }
+    if (length(idx_state) > 0) {
+      state_rank <- rank(-state_totals$total_receipts, ties.method = "min")[idx_state[[1]]]
+    }
   }
   if (!is.na(total_val) && nrow(national_totals) >= min_national) {
-    national_rank <- rank(-national_totals$total_receipts, ties.method = "min")[national_totals$legislator == name][[1]]
+    idx_nat <- which(national_totals$legislator == name)
+    if (length(idx_nat) == 0) {
+      idx_nat <- which(national_totals$legislator_clean == name_clean)
+    }
+    if (length(idx_nat) > 0) {
+      national_rank <- rank(-national_totals$total_receipts, ties.method = "min")[idx_nat[[1]]]
+    }
   }
 
   list(

@@ -3,6 +3,7 @@
 .RData
 data/campaign_receipts_cache.rds
 data/earmark_totals_cache.rds
+data/state_spending_totals_cache.rds
 .Rhistory
 .RData
 .Ruserdata
