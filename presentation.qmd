@@ -1,0 +1,78 @@
+---
+title: ""
+format:
+  revealjs:
+    theme: [simple]
+    slide-number: true
+    transition: fade
+    navigation-mode: linear
+    css: presentation.css
+    footer: "Congress, Cash, & Constituents"
+    title-slide: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+::: {.title-slide .no-footer data-state="title"}
+
+::: {.title-art}
+<div class="title-art-stack">
+  <img src="money_bag.png" class="money-bag" alt="Money bag" />
+  <div class="presented-block">
+```{=html}
+<div class="presented">Presented by:</div>
+<div class="names">Ariel Keller</div>
+<div class="names">Lucille Christian</div>
+```
+  </div>
+</div>
+:::
+
+::: {.title-text}
+<h1><span class="title-main">Congress,<br>Cash, &amp;<br>Constituents:</span><br><span class="title-sub">Where the Money Goes</span></h1>
+:::
+
+:::
+
+---
+
+## WHAT PROBLEM DOES<br>OUR PRODUCT ADDRESS? {.problem-slide .no-footer}
+
+- It’s hard to connect **members of Congress** to both **money in** (campaign finance) and **money out** (federal awards).
+- Relevant data is **scattered across multiple systems** with inconsistent identifiers.
+- We created a **single, interactive tool** that tells a clear money story for any member.
+
+---
+
+## KEY DESIGN DECISIONS<br>& TRADE-OFFS {.problem-slide}
+
+- **State-first selection** to avoid ambiguous names
+- **Cached member list** for speed and stability
+- **Fallback committee source** (UnitedStates.io) for reliability
+- **API calls on demand** to keep the tool live and up to date
+
+---
+
+## WHAT WE WOULD IMPROVE<br>WITH MORE TIME {.problem-slide}
+
+- Better matching between earmarks and awards (more scoring signals)
+- Smarter industry labeling (cleaner donor employer/occupation categories)
+- More robust geolocation (district-level filters for USAspending)
+- Add LLM summaries for plain‑language interpretation
+
+## QUESTIONS? {.question-slide}
+
+```{=html}
+<div class="question-text">Questions?</div>
+```
+
+---
+
+## THANK YOU {.thank-you-slide}
+
+::: {.thank-you-wrap}
+<img src="money_bag.png" class="money-bag" alt="Money bag" />
+<div class="thank-you-text">THANK YOU!</div>
+:::

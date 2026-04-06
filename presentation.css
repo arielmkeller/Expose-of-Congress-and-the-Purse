@@ -1,0 +1,225 @@
+:root {
+  --cc-teal: #3E8E86;
+  --cc-gold: #D39A3A;
+  --cc-gray: #8D8D8D;
+  --cc-dark: #2B2B2B;
+}
+
+.reveal {
+  font-family: "Avenir Next", "Avenir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--cc-dark);
+}
+
+.reveal h1, .reveal h2, .reveal h3 {
+  font-weight: 600;
+}
+
+.reveal h2 {
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--cc-teal);
+  font-size: 2.2rem;
+  line-height: 1.2;
+}
+
+.problem-slide h2 {
+  font-size: 65px;
+  line-height: 1.05;
+  letter-spacing: 0.02em;
+  margin-bottom: 1.2rem;
+}
+
+.reveal p, .reveal li {
+  font-size: 1.45rem;
+  line-height: 1.6;
+}
+
+.reveal ul {
+  margin-top: 1.4rem;
+}
+
+.reveal ul {
+  margin-top: 1rem;
+}
+
+.title-slide {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 2rem;
+  align-items: center;
+  height: 100%;
+}
+
+.title-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.money-bag {
+  width: 260px;
+  height: 260px;
+  margin-top: -20px;
+}
+
+.title-art-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 1.2rem;
+}
+
+.presented-block {
+  text-align: right;
+  font-family: "Gotham", "Avenir Next", "Avenir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #a6a6a6;
+  margin-top: 105px;
+}
+
+.presented-block .presented,
+.presented-block .names {
+  font-size: 2.2rem;
+  line-height: 1.25;
+  letter-spacing: 0.04rem;
+  text-transform: none;
+}
+
+.presented-block .presented {
+  font-weight: 300;
+}
+
+.presented-block .names {
+  font-weight: 400;
+}
+
+
+.title-slide .title-art {
+  align-self: center;
+}
+
+.title-slide .title-art-stack {
+  justify-content: center;
+}
+
+.duke-logo {
+  width: 220px;
+  height: auto;
+  margin-left: -36px;
+}
+
+.title-text h1 {
+  font-size: 2.2rem;
+  line-height: 1.1;
+  margin-bottom: 0.6rem;
+}
+
+.title-text .title-main {
+  color: var(--cc-teal);
+}
+
+.title-text .title-sub {
+  color: var(--cc-gold);
+  font-weight: 500;
+}
+
+.title-text .presented {
+  margin-top: 0.6rem;
+  color: var(--cc-gray);
+  font-size: 1rem;
+  letter-spacing: 0.2rem;
+}
+
+.title-text .names {
+  margin-top: 0.2rem;
+  color: var(--cc-gray);
+  font-size: 0.95rem;
+  letter-spacing: 0.25rem;
+  text-transform: uppercase;
+}
+
+.title-text .school {
+  margin-top: 0.6rem;
+  color: #2c3e7a;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.reveal .slide-number {
+  display: none;
+}
+
+.reveal .footer {
+  color: var(--cc-gray);
+}
+
+.reveal .slides section.no-footer .footer {
+  display: none !important;
+}
+
+.reveal .slides section.title-slide .footer {
+  display: none !important;
+}
+
+.section-title {
+  color: var(--cc-teal);
+}
+
+.accent {
+  color: var(--cc-gold);
+}
+
+.question-slide h2 {
+  display: none;
+}
+
+.reveal .question-text {
+  color: #00887c !important;
+  font-size: 88px !important;
+  text-align: center;
+  font-weight: 600 !important;
+  line-height: 1 !important;
+}
+
+.question-text h1,
+.question-text h2,
+.question-text h3 {
+  color: #00887c !important;
+  font-size: 88px !important;
+  font-weight: 600 !important;
+  margin: 0;
+}
+
+.question-slide {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 100% !important;
+}
+
+.question-slide .question-text {
+  width: 100%;
+}
+
+.thank-you-slide h2 {
+  display: none;
+}
+
+.thank-you-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2.5rem;
+  width: 100%;
+  height: 100%;
+}
+
+.thank-you-text {
+  color: var(--cc-teal);
+  font-size: 5.5rem;
+  letter-spacing: 0.04rem;
+  font-weight: 600;
+  position: relative;
+  top: 8px;
+}
