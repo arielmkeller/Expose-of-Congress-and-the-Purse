@@ -9,7 +9,11 @@ Interactive Shiny tool with two modules:
 1. Install packages in R:
 
 ```r
-install.packages(c("shiny", "dplyr", "ggplot2", "DT", "httr2", "readr", "tibble"))
+install.packages(c(
+  "shiny", "dplyr", "ggplot2", "DT",
+  "httr2", "readr", "readxl", "tibble",
+  "stringr", "jsonlite"
+))
 ```
 
 2. Add OpenFEC API key (choose one):
@@ -31,6 +35,14 @@ export OPENFEC_API_KEY="your_openfec_key_here"
 ```r
 shiny::runApp()
 ```
+
+## Data and usage notes
+
+- Earmarks data file: `fy2_All_Earmarks.xlsx` is required for earmark tables and totals. If it is missing, the app will show "No earmark requests found" and earmark ranks will be blank.
+- Benchmarks data files: `data/benchmarks_in.csv` and `data/benchmarks_out.csv` are used to translate FEC and USAspending values into comparable estimates.
+- Live vs. fallback data:
+  - OpenFEC calls require `OPENFEC_API_KEY`. Without it, the app uses sample outputs and disables campaign funding ranks.
+  - USAspending calls are public and do not require a key, but if the API is unreachable the app falls back to context-only messaging.
 
 ## Current MVP status
 
